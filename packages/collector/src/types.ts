@@ -18,7 +18,17 @@ export interface UsageRecord {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  /**
+   * Event kind, derived from the JSONL type + content blocks (KI-759, Daniel's
+   * decision): distinguishes a human `prompt`, an assistant `answer`, a
+   * `tool_use` dispatch, and its `tool_result` return — so active-time can treat
+   * an agent RUN (tool_use → tool_result span) differently from prompt-prep gaps.
+   * Derived locally from content shape only; no prompt/response text is kept.
+   */
+  kind: EventKind;
 }
+
+export type EventKind = "prompt" | "answer" | "tool_use" | "tool_result" | "other";
 
 export interface TokenTotals {
   inputTokens: number;

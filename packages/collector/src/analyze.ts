@@ -79,21 +79,43 @@ function localDay(d: Date): string {
 }
 
 // Active-time estimation (KI-759). FIXED thresholds, no calibration loop.
-const T_THINK_MS = 5 * 60_000; // gap ≤ this counts fully as active (thinking/typing)
-const T_SESSION_MS = 30 * 60_000; // gap > this = AFK/break, not counted
+const T_THINK_MS = 5 * 60_000; // non-run gap ≤ this counts fully (thinking/typing)
+const T_SESSION_MS = 30 * 60_000; // non-run gap > this = AFK/break, not counted
+const AGENT_RUN_MAX_MS = 45 * 60_000; // sanity cap on a single agent run (resume artifacts)
 const HOUR_MS = 3_600_000;
 
 /**
- * Coarse active time (ms) over a TIME-SORTED record list: each gap contributes
- * min(gap, T_THINK); gaps beyond T_SESSION are breaks and contribute nothing.
+ * Coarse active time (ms) over a TIME-SORTED record list (KI-759, per Daniel's
+ * decision 2026-07-05):
+ *  - An AGENT RUN — a gap where a tool was dispatched and we're waiting for its
+ *    result (`tool_use` → `tool_result`) — counts FULLY: the tool was genuinely
+ *    running, so it is not capped at T_think nor dropped as AFK (capped only by a
+ *    45-min sanity bound against session-resume artifacts).
+ *  - Any other gap (prompt-prep / thinking) contributes min(gap, T_think); gaps
+ *    beyond T_session are breaks and contribute nothing.
  * Correctness-over-precision — a planning signal, not minute-accurate tracking.
+ *
+ * TODO(debt): now = agent runs count fully up to a fixed 45-min cap; full =
+ * Daniel's rule (cap a ≥5-min run at the moment a prompt lands on ANOTHER task —
+ * needs the cross-task merged timeline) + complexity-estimated prep time (§5,
+ * awaiting calibration data).
  */
 function activeMs(sortedRecs: UsageRecord[]): number {
   let ms = 0;
   for (let i = 1; i < sortedRecs.length; i++) {
-    const delta = sortedRecs[i]!.timestamp.getTime() - sortedRecs[i - 1]!.timestamp.getTime();
-    if (delta <= 0 || delta > T_SESSION_MS) continue;
-    ms += Math.min(delta, T_THINK_MS);
+    const prev = sortedRecs[i - 1]!;
+    const cur = sortedRecs[i]!;
+    const delta = cur.timestamp.getTime() - prev.timestamp.getTime();
+    if (delta <= 0) continue;
+    // Same-session check: in the MERGED day timeline, a tool_use from one session
+    // next to a tool_result from another is NOT a run — only within one session is
+    // the adjacency a real dispatch→return.
+    if (prev.kind === "tool_use" && cur.kind === "tool_result" && prev.sessionId === cur.sessionId) {
+      ms += Math.min(delta, AGENT_RUN_MAX_MS); // agent run — count it
+      continue;
+    }
+    if (delta > T_SESSION_MS) continue; // AFK/break
+    ms += Math.min(delta, T_THINK_MS); // prompt-prep proxy
   }
   return ms;
 }

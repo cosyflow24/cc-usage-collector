@@ -3,7 +3,24 @@ import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { UsageRecord } from "./types.ts";
+import type { EventKind, UsageRecord } from "./types.ts";
+
+/**
+ * Classify an event from its JSONL `type` + content-block shapes. Content TEXT is
+ * never read/kept — only the block `type`s (tool_use / tool_result / text) which
+ * tell us whether this is a human prompt, an assistant answer, a tool dispatch, or
+ * a tool return. Drives the agent-run vs prompt-gap distinction in active-time.
+ */
+function classifyKind(type: unknown, content: unknown): EventKind {
+  const blocks = Array.isArray(content) ? content : [];
+  const has = (t: string) => blocks.some((b) => b && (b as { type?: string }).type === t);
+  if (type === "assistant") return has("tool_use") ? "tool_use" : "answer";
+  if (type === "user") {
+    if (has("tool_result")) return "tool_result";
+    if (typeof content === "string" || has("text") || has("image")) return "prompt";
+  }
+  return "other";
+}
 
 /** Default Claude Code projects log dir. Override with CLAUDE_CONFIG_DIR. */
 export function projectsDir(): string {
@@ -58,6 +75,7 @@ function parseLine(line: string): UsageRecord | null {
     model: typeof row?.message?.model === "string" ? row.message.model : null,
     cwd: typeof row?.cwd === "string" ? row.cwd : null,
     gitBranch: typeof row?.gitBranch === "string" ? row.gitBranch : null,
+    kind: classifyKind(row?.type, row?.message?.content),
     dedupeKey: msgId ? `${msgId}|${reqId}` : null,
     inputTokens: num(usage.input_tokens),
     outputTokens: num(usage.output_tokens),

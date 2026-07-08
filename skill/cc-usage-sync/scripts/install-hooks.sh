@@ -16,7 +16,7 @@ CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 BIN="$CC/cc-usage/bin"
 mkdir -p "$BIN" "$CC/commands"
 
-cp "$SRC/session-prompt.sh" "$SRC/ask-task.sh" "$SRC/capture-task.sh" "$SRC/set-task.sh" "$SRC/sync.sh" "$SRC/burn.sh" "$BIN/"
+cp "$SRC/session-prompt.sh" "$SRC/ask-task.sh" "$SRC/capture-task.sh" "$SRC/set-task.sh" "$SRC/sync.sh" "$SRC/burn.sh" "$SRC/jira-cache.sh" "$BIN/"
 chmod +x "$BIN"/*.sh
 
 # /task slash command — records the Jira task (and optional epic) for the session.
@@ -43,8 +43,22 @@ Flow:
 
 1. `none` → run `set-task.sh none` and confirm. Done.
 
-2. A bare key was given (e.g. KI-758). You can't tell Epic vs Task from the
-   number — look it up: getJiraIssue(KEY) → issuetype + parent.
+2. A bare key was given (e.g. KI-758). Load its WORK CONTEXT cache-first and
+   refresh ONLY if the ticket changed (you need type/parent to route AND the
+   description/AC because the user is starting this task):
+   a. `bash ~/.claude/cc-usage/bin/jira-cache.sh get <KEY>` → cached JSON, or MISS.
+   b. Probe freshness cheaply: getJiraIssue(KEY, fields=["updated"]) — one field.
+      - Cache HIT **and** its `updated` equals the probed `updated` → **use the
+        cached context. Do NOT fetch anything else.**
+      - MISS **or** `updated` differs → fetch the full context ONCE:
+        getJiraIssue(KEY, fields=["issuetype","parent","summary","status","updated","description"],
+        responseContentFormat="markdown"), then cache it by piping a JSON object
+        with keys {type, parentKey, summary, status, updated, description}:
+        `printf '%s' '<json>' | bash ~/.claude/cc-usage/bin/jira-cache.sh put <KEY>`.
+   c. You now have {type, parentKey, summary, status, description}. Briefly surface
+      the title + acceptance criteria / description to the user (concise, their
+      language) so they have the context to start the work.
+   d. Classify by type/parent:
    - **Not found** → it's a typo / wrong key (NOT a create — new keys are minted
      by Jira, never typed). Tell the user, ask for the right key. Never create
      from a typed key.

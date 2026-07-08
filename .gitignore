@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# os
+.DS_Store
+
+# local data dumps
+*.local.json
+
+# private dev docs — kept local, not published to GitHub
+docs/superpowers/
+
+# private — kept local, not published
+PLANS.md
+.claude/
+
+# never commit local-only overrides (e.g. active-time floor)
+*.local.ts

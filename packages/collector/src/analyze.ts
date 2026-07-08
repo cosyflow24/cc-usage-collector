@@ -102,20 +102,25 @@ const HOUR_MS = 3_600_000;
  */
 function activeMs(sortedRecs: UsageRecord[]): number {
   let ms = 0;
-  for (let i = 1; i < sortedRecs.length; i++) {
-    const prev = sortedRecs[i - 1]!;
-    const cur = sortedRecs[i]!;
-    const delta = cur.timestamp.getTime() - prev.timestamp.getTime();
+  // Open (dispatched, not-yet-returned) tool count PER SESSION — so intervening
+  // noise events (attachments, mode, system) don't break a run, and a run in one
+  // session isn't confused with another session's events in the merged timeline.
+  const open = new Map<string, number>();
+  for (let i = 0; i < sortedRecs.length; i++) {
+    const r = sortedRecs[i]!;
+    if (r.kind === "tool_use") open.set(r.sessionId, (open.get(r.sessionId) ?? 0) + 1);
+    else if (r.kind === "tool_result" && (open.get(r.sessionId) ?? 0) > 0)
+      open.set(r.sessionId, (open.get(r.sessionId) ?? 0) - 1);
+
+    const next = sortedRecs[i + 1];
+    if (!next) break;
+    const delta = next.timestamp.getTime() - r.timestamp.getTime();
     if (delta <= 0) continue;
-    // Same-session check: in the MERGED day timeline, a tool_use from one session
-    // next to a tool_result from another is NOT a run — only within one session is
-    // the adjacency a real dispatch→return.
-    if (prev.kind === "tool_use" && cur.kind === "tool_result" && prev.sessionId === cur.sessionId) {
-      ms += Math.min(delta, AGENT_RUN_MAX_MS); // agent run — count it
-      continue;
+    if ((open.get(r.sessionId) ?? 0) > 0) {
+      ms += Math.min(delta, AGENT_RUN_MAX_MS); // a tool is running → count the wait fully
+    } else if (delta <= T_SESSION_MS) {
+      ms += Math.min(delta, T_THINK_MS); // prompt-prep proxy (interim, until §5 calib)
     }
-    if (delta > T_SESSION_MS) continue; // AFK/break
-    ms += Math.min(delta, T_THINK_MS); // prompt-prep proxy
   }
   return ms;
 }

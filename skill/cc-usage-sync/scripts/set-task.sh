@@ -27,15 +27,36 @@ fs.mkdirSync(dir, { recursive: true });
 
 let cur = {};
 try { cur = JSON.parse(fs.readFileSync(path.join(dir, "current.json"), "utf8")); } catch {}
-const sid = cur[cwd];
-if (!sid) { console.error("no active session for this dir yet (start one, then retry)"); process.exit(1); }
 
-// "last" → reuse the most recent task recorded for THIS dir (no MCP needed).
+// Resolve the session id $PWD-INDEPENDENTLY. CLAUDE_CODE_SESSION_ID is set by
+// Claude Code in every session and is authoritative — so /task works from ANY
+// directory and survives case-insensitive-FS $PWD differences. Fall back to exact
+// cwd → case-insensitive cwd → the sole registered session.
+const envSid = process.env.CLAUDE_CODE_SESSION_ID || "";
+let sid = "";
+if (envSid) sid = envSid;
+else if (cur[cwd]) sid = cur[cwd];
+else {
+  const lc = cwd.toLowerCase();
+  const ciHit = Object.keys(cur).find((k) => k.toLowerCase() === lc);
+  if (ciHit) sid = cur[ciHit];
+  else if (Object.keys(cur).length === 1) sid = Object.values(cur)[0];
+}
+if (!sid) { console.error("no active session found (start a Claude Code session, then retry)"); process.exit(1); }
+
+// The REGISTERED project cwd (what the SessionStart hook recorded for this sid),
+// reverse-looked-up by sid — used for the stored row + last matching so per-dir
+// rollups stay consistent no matter which directory /task was invoked from.
+let regCwd = cwd;
+for (const [k, v] of Object.entries(cur)) { if (v === sid) { regCwd = k; break; } }
+const regCwdLc = regCwd.toLowerCase();
+
+// "last" → reuse the most recent task recorded for THIS session project dir.
 if (key === "LAST") {
   try {
     const lines = fs.readFileSync(path.join(dir, "tasks.jsonl"), "utf8").split("\n").filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i--) {
-      try { const r = JSON.parse(lines[i]); if (r && r.cwd === cwd && r.jira) { key = r.jira; if (r.epic && !epic) epic = r.epic; break; } } catch {}
+      try { const r = JSON.parse(lines[i]); if (r && String(r.cwd || "").toLowerCase() === regCwdLc && r.jira) { key = r.jira; if (r.epic && !epic) epic = r.epic; break; } } catch {}
     }
   } catch {}
   if (key === "LAST") { console.error("cc-usage: no previous task recorded for this dir"); process.exit(1); }
@@ -54,7 +75,7 @@ const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 if (!KEY.test(key)) { console.error("not a Jira key: " + key); process.exit(1); }
 if (epic && !KEY.test(epic)) { console.error("not a Jira key (epic): " + epic); process.exit(1); }
 
-const row = { sessionId: sid, jira: key, cwd, ts: new Date().toISOString(), src: "task-cmd" };
+const row = { sessionId: sid, jira: key, cwd: regCwd, ts: new Date().toISOString(), src: "task-cmd" };
 if (epic) row.epic = epic;
 fs.appendFileSync(path.join(dir, "tasks.jsonl"), JSON.stringify(row) + "\n");
 console.log("cc-usage: session attributed to " + key + (epic ? (" (epic " + epic + ")") : ""));

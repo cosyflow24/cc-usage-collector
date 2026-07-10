@@ -94,6 +94,13 @@ if [[ -f "$ENV_FILE" ]]; then
   EXIST_TOKEN="$(. "$ENV_FILE" >/dev/null 2>&1; echo "${CC_USAGE_INGEST_TOKEN:-}")"
 fi
 
+# Also honor a token/URL pre-set in the environment. The dashboard /enroll page
+# hands colleagues `CC_USAGE_INGEST_TOKEN=… bash install.sh`, so a pre-set env
+# var must skip the interactive enroll prompt (and makes the non-TTY hint below
+# truthful). A saved env-file value still wins over the ambient env.
+: "${EXIST_TOKEN:=${CC_USAGE_INGEST_TOKEN:-}}"
+: "${EXIST_URL:=${CC_USAGE_INGEST_URL:-}}"
+
 prompt_default() {
   # $1 = prompt, $2 = current/default, $3 = "secret" to hide input
   local p="$1" cur="$2" secret="${3:-}" ans=""
@@ -109,7 +116,7 @@ prompt_default() {
 }
 
 INGEST_URL="${EXIST_URL:-$DEFAULT_INGEST_URL}"
-ENROLL_URL="${INGEST_URL%/api/ingest}/api/enroll"
+ENROLL_PAGE_URL="${INGEST_URL%/api/ingest}/enroll"
 
 # This machine's Claude OAuth work-account email (same path config.ts reads).
 ACCOUNT="$(node -e '
@@ -119,22 +126,20 @@ ACCOUNT="$(node -e '
 ' 2>/dev/null || true)"
 
 if [[ -n "$EXIST_TOKEN" ]]; then
+  # Includes the happy path: the dashboard hands `CC_USAGE_INGEST_TOKEN=… bash
+  # install.sh`, which lands here via EXIST_TOKEN (set above from the env var).
   INGEST_TOKEN="$EXIST_TOKEN"
-  ok "reusing existing personal upload token"
+  ok "personal upload token set"
 elif [[ -t 0 ]]; then
-  # Self-service enrollment: fetch a PER-ACCOUNT token from the server. Colleague
-  # only types the shared team enrollment secret once; no admin hand-off.
-  [[ -n "$ACCOUNT" ]] || die "No Claude work account found — sign into your @nnb24.de account in Claude Code, then re-run."
-  say "Enrolling this account for uploads: $ACCOUNT"
-  read -r -s -p "  Team enrollment secret: " ENROLL_SECRET; echo
-  [[ -n "$ENROLL_SECRET" ]] || die "enrollment secret required"
-  REQ="$(ACCOUNT="$ACCOUNT" SECRET="$ENROLL_SECRET" node -e 'process.stdout.write(JSON.stringify({secret:process.env.SECRET,account:process.env.ACCOUNT}))')"
-  RESP="$(curl -fsS -X POST "$ENROLL_URL" -H 'content-type: application/json' --data "$REQ" 2>/dev/null || true)"
-  INGEST_TOKEN="$(RESP="$RESP" node -e 'try{process.stdout.write(JSON.parse(process.env.RESP).token||"")}catch{process.stdout.write("")}')"
-  [[ -n "$INGEST_TOKEN" ]] || die "enrollment failed — check the secret and that the server is reachable. Server said: ${RESP:0:200}"
-  ok "enrolled — your personal upload token is set (bound to $ACCOUNT)"
+  # No shared secret to hand out — the dashboard login is the gate. Colleague opens the /enroll page,
+  # enters their @work email, and copies their per-account token.
+  say "Get your personal upload token from the dashboard:"
+  say "  $ENROLL_PAGE_URL   (log in, enter your ${ACCOUNT:-@work} email, copy the token)"
+  read -r -s -p "  Paste your upload token: " INGEST_TOKEN; echo
+  [[ -n "$INGEST_TOKEN" ]] || die "token required — open $ENROLL_PAGE_URL to get one."
+  ok "personal upload token set"
 else
-  die "non-interactive shell: run install interactively to enroll, or pre-set CC_USAGE_INGEST_TOKEN"
+  die "non-interactive shell: pre-set CC_USAGE_INGEST_TOKEN (copy it from $ENROLL_PAGE_URL)."
 fi
 
 [[ -n "$INGEST_URL" && -n "$INGEST_TOKEN" ]] \

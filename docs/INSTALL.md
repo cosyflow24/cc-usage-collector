@@ -6,20 +6,34 @@ remove independently. One entrypoint manages all three: `skill/cc-suite.sh`.
 > You only need the colleague distribution repo (`cosyflow24/cc-usage-collector`),
 > not the private monorepo. Clone it once; `cc-suite` lives at `skill/cc-suite.sh`.
 
-## First time
+## First time — usage tracking (required)
+
+No shared secret to hand out: the **dashboard login is the gate**.
+
+1. Open the dashboard → **Enroll a device** (`/enroll`), log in, enter your
+   `@nnb24.de` Claude work email → copy the one-line command.
+2. Paste it into a terminal — it clones the repo and installs with your personal
+   upload token baked in:
 
 ```bash
-git clone https://github.com/cosyflow24/cc-usage-collector.git
-cd cc-usage-collector
-
-# everything, or pick modules
-bash skill/cc-suite.sh install all
-# jira with the daily LaunchAgents:
-bash skill/cc-suite.sh install jira -- --schedule
+git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \
+  && CC_USAGE_INGEST_TOKEN='<token-from-/enroll>' bash install.sh
 ```
 
-Then enroll for uploads once (usage module): run `install.sh` at the repo root, which
-resolves your OAuth email and registers your account — see the collector README.
+The token uploads usage only — it is **not** the dashboard password, and it can be
+revoked individually in the admin area. You never handle a shared secret.
+
+## Optional modules (mainly the maintainer's workflow)
+
+After the usage install, add these if you want them:
+
+```bash
+bash skill/cc-suite.sh install jira -- --schedule   # daily Jira status hygiene + LaunchAgents
+bash skill/cc-suite.sh install estimate             # PERT /estimate command
+```
+
+**Which do I need?** As a colleague: just usage (steps 1–2). `jira` and `estimate`
+are opt-in.
 
 Tip: alias it — `alias cc-suite='bash ~/cc-usage-collector/skill/cc-suite.sh'`.
 

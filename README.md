@@ -10,19 +10,24 @@ separate private repo — you don't need it and never see it.
 
 ## Install
 
+Easiest: open the dashboard → **Enroll a device** (`/enroll`), log in, enter your
+`@nnb24.de` work email, and copy the ready-made one-liner — it clones this repo and
+installs with your **personal upload token** already baked in:
+
 ```bash
-git clone https://github.com/cosyflow24/cc-usage-collector.git
-cd cc-usage-collector
-bash install.sh
+git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \
+  && CC_USAGE_INGEST_TOKEN='<token-from-/enroll>' bash install.sh
 ```
+
+There is **no shared secret** to ask anyone for — the dashboard login is the gate,
+and your token can be revoked individually.
 
 The installer is idempotent and will:
 
 1. Check Node 22+ and pnpm — offering to install them (Homebrew/fnm, corepack) if missing.
 2. Install the collector's dependencies (this repo has no dashboard, so it's small).
-3. **Enroll you automatically**: it reads your Claude OAuth work-account email and
-   fetches your **personal upload token** from the server. You only type the shared
-   **team enrollment secret** once (ask your admin). No token is hand-distributed.
+3. Save your personal upload token (from the env var above, or it prints the
+   `/enroll` page URL and waits for you to paste one).
 4. Wire up the Claude Code hooks and the `/task` + `/burn` commands.
 5. Do a dry run (no upload) to prove parsing works.
 

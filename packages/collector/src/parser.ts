@@ -33,8 +33,14 @@ async function listLogFiles(dir: string): Promise<string[]> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return []; // missing dir → no logs
+  } catch (err) {
+    // A MISSING dir is expected (no logs yet). Anything else (EACCES, EIO, …)
+    // must warn — otherwise a permissions problem reads as "TOTAL sessions 0"
+    // with exit 0 and silently uploads nothing.
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      process.stderr.write(`warning: cannot read ${dir}: ${String(err)}\n`);
+    }
+    return [];
   }
   const out: string[] = [];
   for (const e of entries) {
@@ -94,6 +100,9 @@ export async function readRecords(
   const records: UsageRecord[] = [];
   // Global across all files: the same message id can appear in multiple session
   // files (sidechains/subagents). Count each once.
+  // TODO(debt): 现在=dedup/parse logic proven only by manual fixtures (audit found
+  // zero tests here) 完整=node --test fixtures for parser dedup (historic ~2x
+  // double-count), analyze active-time gaps, pricing, upload splitting, config.
   const seen = new Set<string>();
   for (const file of files) {
     const rl = createInterface({

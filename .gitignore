@@ -22,5 +22,5 @@ docs/superpowers/
 PLANS.md
 .claude/
 
-# never commit local-only overrides (e.g. active-time floor)
+# never commit local-only overrides
 *.local.ts

@@ -96,7 +96,7 @@ fi
 
 # Also honor a token/URL pre-set in the environment. The dashboard /enroll page
 # hands colleagues `CC_USAGE_INGEST_TOKEN=… bash install.sh`, so a pre-set env
-# var must skip the interactive enroll prompt (and makes the non-TTY hint below
+# var must skip the interactive paste prompt (and makes the non-TTY hint below
 # truthful). A saved env-file value still wins over the ambient env.
 : "${EXIST_TOKEN:=${CC_USAGE_INGEST_TOKEN:-}}"
 : "${EXIST_URL:=${CC_USAGE_INGEST_URL:-}}"

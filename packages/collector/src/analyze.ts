@@ -32,10 +32,10 @@ export interface AnalyzeOptions {
   ccusageCost?: Map<string, CcusageSessionCost> | null;
   /**
    * Optional per-day active-hours transform, applied to each worked day's coarse
-   * active hours before they are apportioned to that day's sessions. Used by the
-   * LOCAL workday-floor (kept out of git). Identity when absent. Because the
-   * transform feeds BOTH the daily rollup AND the per-session apportioning, the
-   * two stay consistent (Σ sessions of a day == that day's daily active).
+   * active hours before they are apportioned to that day's sessions. Identity
+   * when absent. Because the transform feeds BOTH the daily rollup AND the
+   * per-session apportioning, the two stay consistent (Σ sessions of a day ==
+   * that day's daily active).
    */
   dayHoursTransform?: (day: string, hours: number) => number;
 }
@@ -290,7 +290,7 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   // Bucket every record by calendar DAY (and, within the day, by session):
   //   1. a day's coarse active hours = ALL that day's events merged into one
   //      timeline (concurrent sessions never double-count), then the optional
-  //      workday transform;
+  //      day-hours transform;
   //   2. that day's hours are apportioned across the day's sessions by each
   //      session's share of raw same-day active. A multi-day session sums its
   //      per-day shares — so no single session can exceed a day, and

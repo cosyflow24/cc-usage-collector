@@ -1,4 +1,6 @@
 #!/usr/bin/env -S npx tsx
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { analyze } from "./analyze.ts";
 import { fetchCcusageCost, fetchCcusageDailyTotal } from "./ccusage.ts";
@@ -51,6 +53,19 @@ program
     // failure → pricing.ts is the self-sufficient primary path.
     const ccusageCost = await fetchCcusageCost(since, until);
 
+    // Optional machine-local per-day active-hours transform, consumed by
+    // analyze() (which apportions it into daily AND per-session so they stay
+    // consistent). Loaded ONLY when CC_USAGE_LOCAL_HOOK points at a module
+    // exporting `dayHoursTransform` (an untracked *.local.ts file; sync.sh
+    // sources the repo .env, so set it there). Unset → measured values, and the
+    // tracked code references no local module path, so fresh clones typecheck.
+    let dayHoursTransform: ((day: string, hours: number) => number) | undefined;
+    const localHook = process.env.CC_USAGE_LOCAL_HOOK;
+    if (localHook) {
+      // A configured-but-broken hook must surface, not silently disable itself.
+      ({ dayHoursTransform } = await import(pathToFileURL(resolve(localHook)).href));
+    }
+
     const result = analyze(records, {
       user,
       since,
@@ -61,6 +76,7 @@ program
       sessionTasks,
       sessionAccounts,
       ccusageCost,
+      dayHoursTransform,
     });
 
     if (opts.json) {
@@ -111,9 +127,34 @@ program
       let res: { sessions: number; daily: number };
       if (ingestUrl && ingestToken) {
         const { httpUpload } = await import("./upload.ts");
-        res = await httpUpload(toUpload, { url: ingestUrl, token: ingestToken });
+        // Phase 3: attach the automated-Jira-action audit trail. Local HWM ships
+        // only new lines (event_ts >= lastTs, boundary-inclusive); the DB unique
+        // key collapses the re-sent boundary second. Advance the HWM ONLY after a
+        // successful POST — a failure retries next run (double-send is a DB no-op).
+        const { loadJiraAudit, maxAuditTs, readAuditHwm, writeAuditHwm } = await import(
+          "./audit.ts"
+        );
+        const lastTs = readAuditHwm();
+        const auditRows = loadJiraAudit(lastTs);
+        res = await httpUpload(toUpload, {
+          url: ingestUrl,
+          token: ingestToken,
+          jiraAudit: auditRows,
+          // Past the isWorkAccount gate above, so account is non-null here.
+          auditUser: account ?? undefined,
+        });
+        // Advance the HWM only when the rows actually rode a real auditUser —
+        // upload.ts attaches jiraAudit solely to that account's payload. Guarding
+        // on `account` keeps HWM and the wire in lockstep even if the isWorkAccount
+        // invariant above ever changes (else: HWM advances, rows never sent = loss).
+        if (account && auditRows.length > 0) {
+          writeAuditHwm(maxAuditTs(auditRows));
+          process.stderr.write(`Uploaded ${auditRows.length} jira-audit row(s).\n`);
+        }
       } else {
-        // Fallback: direct Supabase write (requires SUPABASE_* locally).
+        // Fallback: direct Supabase write (requires SUPABASE_* locally). The audit
+        // trail rides only the ingest/HTTP path (the production sync path); it is
+        // deliberately not sent via this local-only Supabase fallback.
         const { upload } = await import("./supabase.ts");
         res = await upload(toUpload);
       }

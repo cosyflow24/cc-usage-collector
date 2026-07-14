@@ -9,7 +9,8 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsup src/cli.ts --format esm --clean"
+    "build": "tsup src/cli.ts --format esm --clean",
+    "test": "node --test --import tsx"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

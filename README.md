@@ -34,6 +34,17 @@ The installer is idempotent and will:
 Requirements: signed into your **@nnb24.de** work account in Claude Code (Max or
 Enterprise). Personal accounts are ignored and never uploaded.
 
+## Updating
+
+```bash
+cd cc-usage-collector && git pull && bash install.sh
+```
+
+Installed **before 2026-07-14**? The repo history was rewritten and `git pull`
+will error — run `git fetch origin && git reset --hard origin/main && bash
+install.sh` instead (your token/config live in `~/.claude/cc-usage/` and
+survive). Details: [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Daily use
 
 Nothing to do — usage uploads on its own when a session ends. Two commands:

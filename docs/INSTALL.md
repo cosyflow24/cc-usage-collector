@@ -34,6 +34,29 @@ cd cc-usage-collector && git pull && bash install.sh   # idempotent — safe to 
 
 `install.sh` reuses your saved token, so no re-enroll is needed.
 
+### `git pull` fails? (history was rewritten in July 2026)
+
+If you installed **before 2026-07-14**, the repo history was rewritten and a
+plain `git pull` errors with *"fatal: refusing to merge unrelated histories"*
+or *"Your branch and 'origin/main' have diverged"*. Reset onto the new history
+— your token and config live in `~/.claude/cc-usage/`, **not** in this folder,
+so nothing is lost:
+
+```bash
+cd cc-usage-collector
+git fetch origin && git reset --hard origin/main
+bash install.sh          # re-wires hooks, reuses your saved token
+```
+
+Fully clean alternative (same result, fresh folder):
+
+```bash
+bash skill/cc-usage-sync/scripts/uninstall-hooks.sh   # keeps ~/.claude/cc-usage config
+cd .. && rm -rf cc-usage-collector
+git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector
+bash install.sh          # finds your saved token → runs unattended, no re-enroll
+```
+
 ## Uninstall
 
 ```bash

@@ -55,11 +55,11 @@ if (!sid) process.exit(0); // no session id -> cannot track; never block
 
 const askedDir = path.join(dir, "asked");
 const hasSkip = () => { try { return fs.existsSync(path.join(askedDir, sid)); } catch { return false; } };
-function declaredKey() {
+function declaredRow() {
   try {
     const lines = fs.readFileSync(path.join(dir, "tasks.jsonl"), "utf8").split("\n").filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i--) {
-      try { const r = JSON.parse(lines[i]); if (r && r.sessionId === sid && r.jira) return r.jira; } catch {}
+      try { const r = JSON.parse(lines[i]); if (r && r.sessionId === sid && r.jira) return r; } catch {}
     }
   } catch {}
   return null;
@@ -79,8 +79,9 @@ const writeMarker = (name) => {
 
 if (hasSkip()) process.exit(0); // /task none -> stay quiet
 
-const declared = declaredKey();
-if (declared) {
+const declaredRowV = declaredRow();
+if (declaredRowV) {
+  const declared = declaredRowV.jira;
   // Drift: declared key vs the Jira key in the current git branch. Nudge once per drift.
   const bk = branchKey();
   if (bk && bk !== declared) {
@@ -92,6 +93,28 @@ if (declared) {
         `Run  /task ${bk}  to switch, or ignore to keep ${declared}.\n` +
         `[DE] Task gewechselt? Diese Session ist als ${declared} erfasst, der Branch zeigt aber auf ${bk}. ` +
         `Fuehre  /task ${bk}  zum Wechseln aus, oder ignoriere es.`;
+      process.stdout.write(JSON.stringify({ decision: "block", reason }));
+      process.exit(0);
+    }
+  }
+  // STALE binding: long-lived (resumed) sessions keep an old /task binding for
+  // weeks and silently mis-attribute new work (real case: 2 weeks of module dev
+  // landed on a parked ticket). A binding older than 24h must be re-confirmed —
+  // at most once per session per day; any /task run refreshes the timestamp.
+  const STALE_H = 24;
+  const ageH = (Date.now() - new Date(declaredRowV.ts || 0).getTime()) / 3600000;
+  if (isFinite(ageH) && ageH > STALE_H) {
+    const mark = `stale-${sid}-${new Date().toISOString().slice(0, 10)}`;
+    if (!hasSkipMark(mark)) {
+      writeMarker(mark);
+      const ageD = Math.round(ageH / 24 * 10) / 10;
+      const reason =
+        `[cc-usage] Still working on ${declared}? This session was bound to it ${ageD}d ago. ` +
+        `Confirm with  /task last  (keep), switch with  /task <KEY>, or  /task none  to stop tracking. ` +
+        `Asked at most once per day.\n` +
+        `[DE] Arbeitest du noch an ${declared}? Diese Session wurde vor ${ageD} Tag(en) darauf gebucht. ` +
+        `Bestaetige mit  /task last  (behalten), wechsle mit  /task <KEY>  oder  /task none. ` +
+        `Hoechstens einmal pro Tag gefragt.`;
       process.stdout.write(JSON.stringify({ decision: "block", reason }));
     }
   }

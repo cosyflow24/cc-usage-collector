@@ -52,12 +52,17 @@ async function listLogFiles(dir: string): Promise<string[]> {
 }
 
 function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  // Clamp to >= 0: a corrupt negative count must never subtract from totals.
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
 }
+
+// A legit usage line is a few KB; anything near 1MB is a corrupt/runaway line.
+// Skip it before JSON.parse so one bad line can't exhaust memory for the run.
+const MAX_LINE_LEN = 1_000_000;
 
 /** Parse one JSONL line into a UsageRecord, or null if not a timestamped record. */
 function parseLine(line: string): UsageRecord | null {
-  if (!line) return null;
+  if (!line || line.length > MAX_LINE_LEN) return null;
   let row: any;
   try {
     row = JSON.parse(line);

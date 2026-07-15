@@ -61,6 +61,31 @@ test("loadJiraAudit: HWM filter is boundary-INCLUSIVE (>= sinceTs)", () => {
   assert.deepEqual(rows.map((r) => r.key), ["KI-2", "KI-3"]);
 });
 
+test("loadJiraAudit: skips unparseable-ts and far-future-ts rows (HWM poisoning guard)", () => {
+  const future = new Date(Date.now() + 48 * 3_600_000).toISOString();
+  const file = writeLog([
+    { ...good, ts: "zzzz", key: "KI-1" }, // unparseable → skipped
+    { ...good, ts: future, key: "KI-2" }, // >24h in the future → skipped
+    { ...good, ts: "2026-07-13T10:00:00Z", key: "KI-3" }, // valid → kept
+  ]);
+  const rows = loadJiraAudit("", file);
+  assert.deepEqual(rows.map((r) => r.key), ["KI-3"]);
+});
+
+test("maxAuditTs: never advances past the max VALID ts", () => {
+  const future = new Date(Date.now() + 48 * 3_600_000).toISOString();
+  assert.equal(
+    maxAuditTs([
+      { ...good, ts: "zzzz" }, // unparseable — would win a naive string compare
+      { ...good, ts: future }, // far future — uploads fine but must not pin the HWM
+      { ...good, ts: "9999-12-31T00:00:00Z" }, // absurd future stamp
+      { ...good, ts: "2026-07-13T12:00:00Z" }, // max VALID ts
+    ]),
+    "2026-07-13T12:00:00Z",
+  );
+  assert.equal(maxAuditTs([{ ...good, ts: "zzzz" }]), "");
+});
+
 test("maxAuditTs: returns the latest ts, '' when empty", () => {
   assert.equal(maxAuditTs([]), "");
   assert.equal(

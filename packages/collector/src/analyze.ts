@@ -239,41 +239,41 @@ function rollupModels(sessions: SessionSummary[]): ModelUsage[] {
   return [...map.values()].sort((a, b) => b.totalTokens - a.totalTokens);
 }
 
-function buildDaily(
-  sessions: SessionSummary[],
-  user: string,
-  // Precise per-day active hours (all of the user's events that day merged into
-  // one timeline → no double-count). When absent, fall back to summing session
-  // hours (an upper bound that can double-count concurrent sessions).
-  dayActiveHours?: Map<string, number>,
-): DailySummary[] {
+function buildDaily(sessions: SessionSummary[]): DailySummary[] {
+  // Roll up per (user, day) — NEVER per day alone: a day mixing work + personal
+  // sessions must produce one row per account, not attribute everything to the
+  // first session's account. ACTIVE-TIME SEMANTICS: the day-timeline merge in
+  // analyze() stays per-day-all-accounts (one human, one machine — concurrent
+  // sessions never double-count) and apportions the day's hours to sessions;
+  // daily is then Σ of the user's session shares, so
+  // Σ(a user's session hours of a day) == that user's daily hours by
+  // construction.
   const map = new Map<string, SessionSummary[]>();
   for (const s of sessions) {
-    (map.get(s.day) ?? map.set(s.day, []).get(s.day)!).push(s);
+    const k = `${s.user}\u0000${s.day}`;
+    (map.get(k) ?? map.set(k, []).get(k)!).push(s);
   }
-  return [...map.entries()]
-    .map(([day, ses]) => {
+  return [...map.values()]
+    .map((ses) => {
       const totals = emptyTotals();
       let notionalCostUsd = 0;
+      let activeTimeHours = 0;
       for (const s of ses) {
         mergeTotals(totals, s.totals);
         notionalCostUsd += s.notionalCostUsd;
+        activeTimeHours += s.activeTimeHours;
       }
       return {
-        day,
-        // The day's account = that day's sessions' account. With a clean cutoff
-        // (one account per day) this is exact. TODO(debt): if a single day ever
-        // mixes accounts, daily rolls up under the first session's account only.
-        user: ses[0]?.user ?? user,
+        day: ses[0]!.day,
+        user: ses[0]!.user,
         sessions: ses.length,
         modelUsage: rollupModels(ses),
         totals,
         notionalCostUsd,
-        activeTimeHours:
-          dayActiveHours?.get(day) ?? ses.reduce((a, s) => a + s.activeTimeHours, 0),
+        activeTimeHours,
       };
     })
-    .sort((a, b) => a.day.localeCompare(b.day));
+    .sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
 
 export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisResult {
@@ -293,8 +293,9 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   //      day-hours transform;
   //   2. that day's hours are apportioned across the day's sessions by each
   //      session's share of raw same-day active. A multi-day session sums its
-  //      per-day shares — so no single session can exceed a day, and
-  //      Σ (sessions of a day) == that day's daily active == what epics sum.
+  //      per-day shares — so no single session can exceed a day, and the daily
+  //      rollup (per user+day, from these shares) == Σ its sessions == what
+  //      epics sum.
   const recsByDay = new Map<string, UsageRecord[]>();
   const daySessions = new Map<string, Map<string, UsageRecord[]>>();
   for (const r of filtered) {
@@ -304,12 +305,10 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     (sm.get(r.sessionId) ?? sm.set(r.sessionId, []).get(r.sessionId)!).push(r);
   }
   const transform = opts.dayHoursTransform ?? ((_d, h) => h);
-  const dayActiveHours = new Map<string, number>();
   const sessionActiveHours = new Map<string, number>();
   for (const [day, recs] of recsByDay) {
     recs.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const dayHours = transform(day, toActiveHours(activeMs(recs)));
-    dayActiveHours.set(day, dayHours);
     if (dayHours <= 0) continue;
     const rawBy = new Map<string, number>();
     let sumRaw = 0;
@@ -345,7 +344,7 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     user: opts.user,
     range: { since: opts.since.toISOString(), until: opts.until.toISOString() },
     sessions,
-    daily: buildDaily(sessions, opts.user, dayActiveHours),
+    daily: buildDaily(sessions),
     modelUsage: rollupModels(sessions),
     totals,
     notionalCostUsd,

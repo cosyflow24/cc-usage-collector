@@ -19,6 +19,19 @@ import path from "node:path";
 
 const KEY_RE = /^[A-Z][A-Z0-9]+-[0-9]+$/;
 
+// A row's ts must parse AND not sit far in the future: the ingest route silently
+// skips rows with an unparseable event_ts, but such a ts would still win the
+// string-compare in maxAuditTs and become the HWM — permanently suppressing all
+// later VALID rows (they'd sort below the poisoned mark). Same for a far-future
+// ts: it uploads fine but pins the HWM ahead of real time. 24h of slack absorbs
+// clock skew without letting a bogus year-9999 stamp poison the mark.
+const MAX_FUTURE_MS = 24 * 3_600_000;
+
+function isValidAuditTs(ts: string): boolean {
+  const ms = Date.parse(ts);
+  return !Number.isNaN(ms) && ms <= Date.now() + MAX_FUTURE_MS;
+}
+
 function cjBase(): string {
   const base = process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude");
   return path.join(base, "cc-jira");
@@ -66,7 +79,7 @@ export function loadJiraAudit(sinceTs = "", file = auditPath()): AuditRow[] {
     } catch {
       continue;
     }
-    if (typeof row.ts !== "string" || !row.ts) continue;
+    if (typeof row.ts !== "string" || !isValidAuditTs(row.ts)) continue;
     if (typeof row.key !== "string" || !KEY_RE.test(row.key)) continue;
     if (typeof row.to !== "string" || !row.to) continue;
     if (typeof row.by !== "string" || !row.by) continue;
@@ -83,9 +96,14 @@ export function loadJiraAudit(sinceTs = "", file = auditPath()): AuditRow[] {
   return rows;
 }
 
-/** Highest event_ts across a set of rows (for advancing the HWM). "" if empty. */
+/**
+ * Highest VALID event_ts across a set of rows (for advancing the HWM). "" if
+ * empty. Re-checks validity even though loadJiraAudit already filters — callers
+ * may pass rows from elsewhere, and an invalid/future ts here would poison the
+ * HWM (see isValidAuditTs).
+ */
 export function maxAuditTs(rows: AuditRow[]): string {
-  return rows.reduce((m, r) => (r.ts > m ? r.ts : m), "");
+  return rows.reduce((m, r) => (isValidAuditTs(r.ts) && r.ts > m ? r.ts : m), "");
 }
 
 /** Read the last-synced event_ts; "" (send all) when the file is missing/corrupt. */

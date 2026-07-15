@@ -1,6 +1,12 @@
 import type { AuditRow } from "./audit.ts";
 import { isWorkAccount } from "./config.ts";
-import type { AnalysisResult, DailySummary, SessionSummary } from "./types.ts";
+import type {
+  AnalysisResult,
+  DailySummary,
+  ModelUsage,
+  SessionSummary,
+  TokenTotals,
+} from "./types.ts";
 
 /**
  * Upload analysis to the Railway ingest API. Local machines hold only a scoped
@@ -18,6 +24,56 @@ import type { AnalysisResult, DailySummary, SessionSummary } from "./types.ts";
  * has no sessions this run, we still POST a standalone {sessions:[],daily:[],
  * jiraAudit:[...]} — the route accepts empty arrays.
  */
+// The wire payload is built by EXPLICIT field projection — never by serializing
+// the in-memory objects. Metadata-only by construction: any field a future
+// refactor attaches to a session/day (worst case: prompt content) does NOT ship
+// unless it is deliberately added here AND accepted by the ingest route. The
+// field sets mirror the route's isSessionRow / isDailyRow validators.
+function wireTotals(t: TokenTotals): TokenTotals {
+  return {
+    inputTokens: t.inputTokens,
+    outputTokens: t.outputTokens,
+    cacheCreationTokens: t.cacheCreationTokens,
+    cacheReadTokens: t.cacheReadTokens,
+    totalTokens: t.totalTokens,
+  };
+}
+
+function wireModelUsage(m: ModelUsage): ModelUsage {
+  return { model: m.model, ...wireTotals(m), costUsd: m.costUsd };
+}
+
+function wireSession(s: SessionSummary): SessionSummary {
+  return {
+    sessionId: s.sessionId,
+    user: s.user,
+    project: s.project,
+    gitBranch: s.gitBranch,
+    jiraKey: s.jiraKey,
+    epicKey: s.epicKey,
+    epicSummary: s.epicSummary,
+    day: s.day,
+    messageCount: s.messageCount,
+    models: [...s.models],
+    modelUsage: s.modelUsage.map(wireModelUsage),
+    totals: wireTotals(s.totals),
+    notionalCostUsd: s.notionalCostUsd,
+    activeTimeHours: s.activeTimeHours,
+  };
+}
+
+function wireDaily(d: DailySummary): DailySummary {
+  return {
+    day: d.day,
+    user: d.user,
+    sessions: d.sessions,
+    modelUsage: d.modelUsage.map(wireModelUsage),
+    totals: wireTotals(d.totals),
+    notionalCostUsd: d.notionalCostUsd,
+    activeTimeHours: d.activeTimeHours,
+  };
+}
+
 export async function httpUpload(
   result: AnalysisResult,
   opts: { url: string; token: string; jiraAudit?: AuditRow[]; auditUser?: string },
@@ -66,8 +122,8 @@ export async function httpUpload(
       },
       body: JSON.stringify({
         user,
-        sessions: payload.sessions,
-        daily: payload.daily,
+        sessions: payload.sessions.map(wireSession),
+        daily: payload.daily.map(wireDaily),
         ...(jiraAudit.length > 0 ? { jiraAudit } : {}),
       }),
     });

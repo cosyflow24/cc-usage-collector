@@ -1,4 +1,5 @@
 import type { AuditRow } from "./audit.ts";
+import { isWorkAccount } from "./config.ts";
 import type { AnalysisResult, DailySummary, SessionSummary } from "./types.ts";
 
 /**
@@ -30,8 +31,23 @@ export async function httpUpload(
     }
     return b;
   };
-  for (const s of result.sessions) bucket(s.user).sessions.push(s);
-  for (const d of result.daily) bucket(d.user).daily.push(d);
+  // POLICY, enforced at the wire (not only at the run gate): sessions attributed
+  // to a NON-work account never leave the machine. The cli gate checks the
+  // CURRENTLY signed-in account, but a multi-account history buckets per-session
+  // users — a personal bucket must be dropped here, not POSTed and 403'd (its
+  // metadata would already have crossed the wire, and the throw aborts the run).
+  let skippedPersonal = 0;
+  for (const s of result.sessions) {
+    if (!isWorkAccount(s.user)) { skippedPersonal++; continue; }
+    bucket(s.user).sessions.push(s);
+  }
+  for (const d of result.daily) {
+    if (!isWorkAccount(d.user)) continue;
+    bucket(d.user).daily.push(d);
+  }
+  if (skippedPersonal > 0) {
+    process.stderr.write(`${skippedPersonal} session(s) on non-work accounts kept local (never uploaded).\n`);
+  }
 
   // Ensure the work account has a bucket so its audit rows have somewhere to ride,
   // even when it produced no sessions today.

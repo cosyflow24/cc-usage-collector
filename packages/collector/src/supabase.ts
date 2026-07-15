@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { isWorkAccount } from "./config.ts";
 import type { AnalysisResult } from "./types.ts";
 
 /** Build a Supabase client from env, or null if not configured. */
@@ -19,7 +20,9 @@ export async function upload(result: AnalysisResult): Promise<{ sessions: number
     );
   }
 
-  const sessionRows = result.sessions.map((s) => ({
+  // Same wire policy as upload.ts: non-work-account sessions never leave the
+  // machine — filter before mapping, on both rows sets.
+  const sessionRows = result.sessions.filter((s) => isWorkAccount(s.user)).map((s) => ({
     user_id: s.user,
     session_id: s.sessionId,
     project: s.project,
@@ -40,7 +43,7 @@ export async function upload(result: AnalysisResult): Promise<{ sessions: number
     active_ms: Math.round(s.activeTimeHours * 3_600_000),
   }));
 
-  const dailyRows = result.daily.map((d) => ({
+  const dailyRows = result.daily.filter((d) => isWorkAccount(d.user)).map((d) => ({
     user_id: d.user,
     day: d.day,
     sessions: d.sessions,

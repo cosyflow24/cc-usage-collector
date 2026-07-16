@@ -41,11 +41,7 @@ Flow:
      from a typed key.
    - **Sub-task** → roll up to its parent task and record that.
    - **Task/Story/Bug** → record it; include its parent epic if it has one:
-     `set-task.sh <TASK> <EPIC>`. Zero extra questions — EXCEPT the estimate
-     nudge: if `timeoriginalestimate` is null AND `~/.claude/cc-estimate` exists,
-     compute a draft (see ESTIMATE DRAFT below) and offer it in the SAME
-     confirmation message ("Setzen? ja/nein") — one tap, never silent, skip on
-     anything but an explicit yes. No cc-estimate installed → say nothing.
+     `set-task.sh <TASK> <EPIC>`. Zero extra questions.
    - **Epic** → always drill to a task (decision: never attribute at epic level).
      List the epic's child tasks (searchJiraIssuesUsingJql `parent = <EPIC>`).
      Ask the user to pick one, or to create a new one. If the epic has no
@@ -80,15 +76,6 @@ Flow:
       After creating, verify per GET (getJiraIssue, fields=["assignee","priority"])
       that assignee + priority landed; fix via editJiraIssue if not.
    d. Take the returned key, then record `set-task.sh <TASK> [EPIC]`.
-   e. ESTIMATE DRAFT (only if `~/.claude/cc-estimate` exists — else skip silently):
-      compute a proposal from the German summary/description:
-      `pnpm --filter @cc-usage/estimate start -- --fill --key <KEY> --summary "<summary>" --desc-file <tmpfile> --json`
-      (run from the cc-usage checkout recorded in ~/.claude/cc-usage/env
-      CC_USAGE_REPO; if the engine is unavailable, skip silently). Present ONE
-      line: `Ursprüngliche Schätzung = <jiraEstimate> (Vorschlag) — setzen?
-      ja/anderer Wert/nein`. On explicit ja → editJiraIssue(KEY,
-      {"timetracking":{"originalEstimate":"<jiraEstimate>"}}). NEVER write
-      without the ja (locked decision: estimateFill is propose-only).
 
 Record with: `bash ~/.claude/cc-usage/bin/set-task.sh <TASK> [EPIC]`
 (or `... none`). Then confirm what was recorded, in the user's language.

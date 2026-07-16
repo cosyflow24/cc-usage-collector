@@ -112,6 +112,7 @@ export async function httpUpload(
 
   let sessions = 0;
   let daily = 0;
+  let skippedUnauthorized = 0;
   for (const [user, payload] of byUser) {
     const jiraAudit = user === opts.auditUser ? audit : [];
     const res = await fetch(opts.url, {
@@ -129,11 +130,30 @@ export async function httpUpload(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      // 401/403 = this token is not allowed to upload as THIS account. Common for
+      // a two-account person (e.g. a Max + an Enterprise login) whose token only
+      // covers one email: skip that account's bucket and keep uploading the ones
+      // it DOES cover — do not abort the whole run (which would also lose the
+      // covered account). Other errors (400 bad payload, 5xx) are real and rethrow.
+      if (res.status === 401 || res.status === 403) {
+        skippedUnauthorized++;
+        process.stderr.write(
+          `Skipped ${user}: token not authorized to upload as this account ` +
+            `(${res.status}). Enroll this account or have the maintainer extend your token.\n`,
+        );
+        continue;
+      }
       throw new Error(`ingest failed for ${user} (${res.status}): ${text.slice(0, 200)}`);
     }
     const json = (await res.json()) as { sessions?: number; daily?: number };
     sessions += json.sessions ?? 0;
     daily += json.daily ?? 0;
+  }
+  if (skippedUnauthorized > 0) {
+    process.stderr.write(
+      `${skippedUnauthorized} account(s) skipped (token not authorized). ` +
+        `Uploaded ${sessions} session(s) for the covered account(s).\n`,
+    );
   }
   return { sessions, daily };
 }

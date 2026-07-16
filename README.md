@@ -11,9 +11,15 @@ separate private repo — you don't need it and never see it.
 ## Install
 
 Open the **enrollment page** your admin gives you (e.g.
-`https://cc-usage.up.railway.app/enroll`), type your `@nnb24.de` Claude work email,
-and copy the ready-made one-liner. It clones this repo and installs with **your
+`https://cc-usage.up.railway.app/enroll`), type your **Max account** email, and
+copy the ready-made one-liner. It clones this repo and installs with **your
 personal upload token** already baked in:
+
+> **Which email?** Enter your **Max** account — the short `lastname@nnb24.de` the
+> company bought you, NOT your `first.last@nnb24.de` Enterprise login. Max is the
+> account with opaque subscription billing, which is the whole point of tracking.
+> If you sometimes switch to your Enterprise account, those sessions are simply
+> skipped (its API usage is billed transparently already) — nothing breaks.
 
 ```bash
 git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \

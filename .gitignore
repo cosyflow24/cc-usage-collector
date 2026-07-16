@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# EXCEPT the plugin's bundled collector — it IS the shipped runtime (colleagues
+# run it via /plugin, no build step), so it must be committed here.
+!cc-usage/dist/
+!cc-usage/dist/**
 .next/
 out/
 *.tsbuildinfo

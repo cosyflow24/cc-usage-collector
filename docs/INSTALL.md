@@ -45,7 +45,23 @@ your own email and re-run — the new token overrides the old one.
 - A daily upload of your usage to the team backend.
 - State lives under `~/.claude/cc-usage/`.
 
+## Switching from the script install to the plugin
+
+Optional — the script keeps working. But **never run both**: each wires its own
+hooks, so both together = double uploads and a doubled `/task` prompt. To switch:
+
+1. Remove the script hooks (keeps your token + history under `~/.claude/cc-usage/`):
+
+   ```bash
+   cd cc-usage-collector && bash skill/cc-usage-sync/scripts/uninstall-hooks.sh
+   ```
+
+2. `/plugin marketplace add cosyflow24/cc-usage-collector` → `/plugin install cc-usage`.
+   Your saved token is reused — no `/cc-usage-login` needed.
+
 ## Update
+
+**Plugin:** `/plugin update`. **Script:**
 
 ```bash
 cd cc-usage-collector && git pull && bash install.sh   # idempotent — safe to re-run

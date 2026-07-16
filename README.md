@@ -59,6 +59,29 @@ The installer is idempotent and will:
 Requirements: signed into your **@nnb24.de** work account in Claude Code (Max or
 Enterprise). Personal accounts are ignored and never uploaded.
 
+## Already installed with the script? (switching to the plugin)
+
+You don't have to switch — the script install keeps working. But the plugin
+updates in one command and needs no terminal. **Do NOT run both**: each wires its
+own hooks, so having both = every session uploads twice and asks for `/task`
+twice. To switch cleanly:
+
+1. Remove the script's hooks (this **keeps** your token + history in
+   `~/.claude/cc-usage/`):
+
+   ```bash
+   cd cc-usage-collector && bash skill/cc-usage-sync/scripts/uninstall-hooks.sh
+   ```
+
+2. Install the plugin:
+
+   ```
+   /plugin marketplace add cosyflow24/cc-usage-collector
+   /plugin install cc-usage
+   ```
+
+   Your saved token is reused — you do **not** need `/cc-usage-login` again.
+
 ## Updating
 
 **Plugin install:** `/plugin update` in Claude Code. That's it.

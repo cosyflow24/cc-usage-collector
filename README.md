@@ -8,27 +8,44 @@ your prompts or responses, no exact clock times.** For planning and cost insight
 This repository is the **collector only**. The dashboard/server code lives in a
 separate private repo — you don't need it and never see it.
 
-## Install
+> **Which email?** Wherever you enter an email below, use your **Max** account —
+> the short `lastname@nnb24.de` the company bought you, NOT your
+> `first.last@nnb24.de` Enterprise login. Max is the account with opaque
+> subscription billing, which is the whole point of tracking. If you sometimes
+> switch to your Enterprise account, those sessions are simply skipped (its API
+> usage is billed transparently already) — nothing breaks.
 
-Open the **enrollment page** your admin gives you (e.g.
-`https://cc-usage.up.railway.app/enroll`), type your **Max account** email, and
-copy the ready-made one-liner. It clones this repo and installs with **your
-personal upload token** already baked in:
+## Install — plugin (recommended)
 
-> **Which email?** Enter your **Max** account — the short `lastname@nnb24.de` the
-> company bought you, NOT your `first.last@nnb24.de` Enterprise login. Max is the
-> account with opaque subscription billing, which is the whole point of tracking.
-> If you sometimes switch to your Enterprise account, those sessions are simply
-> skipped (its API usage is billed transparently already) — nothing breaks.
+Three lines in Claude Code, no terminal, no git, no npm:
+
+```
+/plugin marketplace add cosyflow24/cc-usage-collector
+/plugin install cc-usage
+```
+
+Then get your personal upload token: open the **enrollment page** your admin
+gives you (e.g. `https://cc-usage.up.railway.app/enroll`), enter your **Max**
+email, copy the token, and run:
+
+```
+/cc-usage-login <your-token>
+```
+
+Done. Usage uploads on its own when a session ends. Update any time with
+`/plugin update`. The enrollment page is **public** (no login, no shared secret);
+the token uploads **as you** only and can be revoked individually — you never
+touch the dashboard.
+
+## Install — script (alternative)
+
+Prefer a terminal? The `/enroll` page also hands you a one-liner that clones this
+repo and installs with your token baked in:
 
 ```bash
 git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \
   && CC_USAGE_INGEST_TOKEN='<token-from-/enroll>' bash install.sh
 ```
-
-The enrollment page is **public** — no login, no shared secret. It only mints a
-token bound to your own email; that token uploads usage **as you** and nothing
-else, and it can be revoked individually. You never touch the dashboard.
 
 The installer is idempotent and will:
 
@@ -44,8 +61,10 @@ Enterprise). Personal accounts are ignored and never uploaded.
 
 ## Updating
 
-Just point Claude Code at this repo and say **"update cc-usage"** — it reads
-[docs/INSTALL.md](docs/INSTALL.md) and runs the right commands. Or by hand:
+**Plugin install:** `/plugin update` in Claude Code. That's it.
+
+**Script install:** point Claude Code at this repo and say **"update cc-usage"**
+(it reads [docs/INSTALL.md](docs/INSTALL.md)), or by hand:
 
 ```bash
 cd cc-usage-collector && git pull && bash install.sh

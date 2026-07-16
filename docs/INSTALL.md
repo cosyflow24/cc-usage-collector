@@ -3,16 +3,31 @@
 This repo installs **usage tracking** — the team-wide metric (tokens, cost,
 active-time per session/project/Jira-task). Nothing else runs on your machine.
 
-## First time
+> Use your **Max** account email everywhere below (short `lastname@nnb24.de`, the
+> extra one the company bought — not your `first.last@nnb24.de` Enterprise login).
 
-The **enrollment page is public** (no login, no shared secret) — its only check is
-that you enter an `@nnb24.de` email.
+## First time — plugin (recommended)
 
-1. Open the enrollment page your admin gives you (e.g.
-   `https://cc-usage.up.railway.app/enroll`), enter your `@nnb24.de` Claude work
-   email → copy the one-line command.
-2. Paste it into a terminal — it clones this repo and installs with your personal
-   upload token baked in:
+No terminal. In Claude Code:
+
+```
+/plugin marketplace add cosyflow24/cc-usage-collector
+/plugin install cc-usage
+```
+
+Then get your token: open the **public** enrollment page your admin gives you
+(e.g. `https://cc-usage.up.railway.app/enroll`), enter your Max email, copy the
+token, and run:
+
+```
+/cc-usage-login <your-token>
+```
+
+Update any time: `/plugin update`.
+
+## First time — script (alternative)
+
+The `/enroll` page also hands you a one-liner for the terminal:
 
 ```bash
 git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \
@@ -22,7 +37,7 @@ git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-co
 The token uploads usage **as you** only — it is **not** the dashboard password
 (you never get one), it can only report metadata for your own account, and it can
 be revoked individually. If you were handed someone else's token, re-enroll with
-your own email and re-run the one-liner — the new token overrides the old one.
+your own email and re-run — the new token overrides the old one.
 
 ## What it installs
 

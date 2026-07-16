@@ -94,11 +94,13 @@ if [[ -f "$ENV_FILE" ]]; then
   EXIST_TOKEN="$(. "$ENV_FILE" >/dev/null 2>&1; echo "${CC_USAGE_INGEST_TOKEN:-}")"
 fi
 
-# Also honor a token/URL pre-set in the environment. The dashboard /enroll page
-# hands colleagues `CC_USAGE_INGEST_TOKEN=… bash install.sh`, so a pre-set env
-# var must skip the interactive paste prompt (and makes the non-TTY hint below
-# truthful). A saved env-file value still wins over the ambient env.
-: "${EXIST_TOKEN:=${CC_USAGE_INGEST_TOKEN:-}}"
+# A token pre-set in the environment OVERRIDES the saved one. This is how a
+# colleague switches tokens: re-enroll on the /enroll page → paste the new
+# `CC_USAGE_INGEST_TOKEN=… bash install.sh` → the personal token replaces an old
+# or shared one. A plain `git pull && bash install.sh` (no env var) reuses the
+# saved token. (Was the reverse — saved-wins — which silently kept a stale token
+# across a re-enroll.)
+[[ -n "${CC_USAGE_INGEST_TOKEN:-}" ]] && EXIST_TOKEN="$CC_USAGE_INGEST_TOKEN"
 : "${EXIST_URL:=${CC_USAGE_INGEST_URL:-}}"
 
 prompt_default() {
@@ -126,15 +128,16 @@ ACCOUNT="$(node -e '
 ' 2>/dev/null || true)"
 
 if [[ -n "$EXIST_TOKEN" ]]; then
-  # Includes the happy path: the dashboard hands `CC_USAGE_INGEST_TOKEN=… bash
-  # install.sh`, which lands here via EXIST_TOKEN (set above from the env var).
+  # Happy path: the /enroll page hands `CC_USAGE_INGEST_TOKEN=… bash install.sh`,
+  # which lands here via EXIST_TOKEN (env var overrides any saved token — a
+  # re-enroll switches tokens). Also covers a plain re-run reusing the saved one.
   INGEST_TOKEN="$EXIST_TOKEN"
   ok "personal upload token set"
 elif [[ -t 0 ]]; then
-  # No shared secret to hand out — the dashboard login is the gate. Colleague opens the /enroll page,
-  # enters their @work email, and copies their per-account token.
-  say "Get your personal upload token from the dashboard:"
-  say "  $ENROLL_PAGE_URL   (log in, enter your ${ACCOUNT:-@work} email, copy the token)"
+  # The /enroll page is PUBLIC (no dashboard login) — open it, type your @work
+  # email, copy your per-account token. No shared secret to chase down.
+  say "Get your personal upload token:"
+  say "  $ENROLL_PAGE_URL   (enter your ${ACCOUNT:-@work} email, copy the token)"
   read -r -s -p "  Paste your upload token: " INGEST_TOKEN; echo
   [[ -n "$INGEST_TOKEN" ]] || die "token required — open $ENROLL_PAGE_URL to get one."
   ok "personal upload token set"

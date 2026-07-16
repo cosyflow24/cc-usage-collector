@@ -5,10 +5,12 @@ active-time per session/project/Jira-task). Nothing else runs on your machine.
 
 ## First time
 
-No shared secret to hand out: the **dashboard login is the gate**.
+The **enrollment page is public** (no login, no shared secret) — its only check is
+that you enter an `@nnb24.de` email.
 
-1. Open the dashboard → **Enroll a device** (`/enroll`), log in, enter your
-   `@nnb24.de` Claude work email → copy the one-line command.
+1. Open the enrollment page your admin gives you (e.g.
+   `https://cc-usage.up.railway.app/enroll`), enter your `@nnb24.de` Claude work
+   email → copy the one-line command.
 2. Paste it into a terminal — it clones this repo and installs with your personal
    upload token baked in:
 
@@ -17,8 +19,10 @@ git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-co
   && CC_USAGE_INGEST_TOKEN='<token-from-/enroll>' bash install.sh
 ```
 
-The token uploads usage only — it is **not** the dashboard password, and it can be
-revoked individually in the admin area.
+The token uploads usage **as you** only — it is **not** the dashboard password
+(you never get one), it can only report metadata for your own account, and it can
+be revoked individually. If you were handed someone else's token, re-enroll with
+your own email and re-run the one-liner — the new token overrides the old one.
 
 ## What it installs
 

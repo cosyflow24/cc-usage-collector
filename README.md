@@ -10,17 +10,19 @@ separate private repo — you don't need it and never see it.
 
 ## Install
 
-Easiest: open the dashboard → **Enroll a device** (`/enroll`), log in, enter your
-`@nnb24.de` work email, and copy the ready-made one-liner — it clones this repo and
-installs with your **personal upload token** already baked in:
+Open the **enrollment page** your admin gives you (e.g.
+`https://cc-usage.up.railway.app/enroll`), type your `@nnb24.de` Claude work email,
+and copy the ready-made one-liner. It clones this repo and installs with **your
+personal upload token** already baked in:
 
 ```bash
 git clone https://github.com/cosyflow24/cc-usage-collector.git && cd cc-usage-collector \
   && CC_USAGE_INGEST_TOKEN='<token-from-/enroll>' bash install.sh
 ```
 
-There is **no shared secret** to ask anyone for — the dashboard login is the gate,
-and your token can be revoked individually.
+The enrollment page is **public** — no login, no shared secret. It only mints a
+token bound to your own email; that token uploads usage **as you** and nothing
+else, and it can be revoked individually. You never touch the dashboard.
 
 The installer is idempotent and will:
 
@@ -36,6 +38,9 @@ Enterprise). Personal accounts are ignored and never uploaded.
 
 ## Updating
 
+Just point Claude Code at this repo and say **"update cc-usage"** — it reads
+[docs/INSTALL.md](docs/INSTALL.md) and runs the right commands. Or by hand:
+
 ```bash
 cd cc-usage-collector && git pull && bash install.sh
 ```
@@ -44,6 +49,22 @@ Installed **before 2026-07-14**? The repo history was rewritten and `git pull`
 will error — run `git fetch origin && git reset --hard origin/main && bash
 install.sh` instead (your token/config live in `~/.claude/cc-usage/` and
 survive). Details: [docs/INSTALL.md](docs/INSTALL.md).
+
+### Getting your own token (if you were given someone else's)
+
+If you first installed with a **shared or someone else's** upload token, switch to
+your own — one-time, ~30 seconds:
+
+1. Open the enrollment page, enter **your** `@nnb24.de` email, copy the one-liner.
+2. Run it in your existing checkout (or re-run the full clone command). The pasted
+   `CC_USAGE_INGEST_TOKEN=…` **overrides** the old saved token — no manual cleanup:
+
+   ```bash
+   cd cc-usage-collector && CC_USAGE_INGEST_TOKEN='<your-new-token>' bash install.sh
+   ```
+
+From then on your usage uploads **as you**, and a plain `git pull && bash
+install.sh` keeps reusing your token (no env var needed).
 
 ## Daily use
 

@@ -8,12 +8,11 @@ your prompts or responses, no exact clock times.** For planning and cost insight
 This repository is the **collector only**. The dashboard/server code lives in a
 separate private repo — you don't need it and never see it.
 
-> **Which email?** Wherever you enter an email below, use your **Max** account —
-> the short `lastname@nnb24.de` the company bought you, NOT your
-> `first.last@nnb24.de` Enterprise login. Max is the account with opaque
-> subscription billing, which is the whole point of tracking. If you sometimes
-> switch to your Enterprise account, those sessions are simply skipped (its API
-> usage is billed transparently already) — nothing breaks.
+> **Which email?** Enter your `@nnb24.de` Claude work email. Have **two** logins
+> — an **Enterprise** `first.last@nnb24.de` (the primary registered one) and a
+> **Max** `lastname@nnb24.de`? We want **both** tracked: enroll the one you use
+> most, then ask your admin to enable the other on your token (a 10-second DB
+> edit). Until then, the un-enrolled account's sessions are skipped (no crash).
 
 ## Install — plugin (recommended)
 

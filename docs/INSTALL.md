@@ -3,8 +3,9 @@
 This repo installs **usage tracking** — the team-wide metric (tokens, cost,
 active-time per session/project/Jira-task). Nothing else runs on your machine.
 
-> Use your **Max** account email everywhere below (short `lastname@nnb24.de`, the
-> extra one the company bought — not your `first.last@nnb24.de` Enterprise login).
+> Enter your `@nnb24.de` Claude work email below. Two logins (Enterprise
+> `first.last@` + Max `lastname@`)? Both should be tracked — enroll the one you
+> use most and ask your admin to enable the other on your token.
 
 ## First time — plugin (recommended)
 

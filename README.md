@@ -9,10 +9,10 @@ This repository is the **collector only**. The dashboard/server code lives in a
 separate private repo — you don't need it and never see it.
 
 > **Which email?** Enter your `@nnb24.de` Claude work email. Have **two** logins
-> — an **Enterprise** `first.last@nnb24.de` (the primary registered one) and a
-> **Max** `lastname@nnb24.de`? We want **both** tracked: enroll the one you use
-> most, then ask your admin to enable the other on your token (a 10-second DB
-> edit). Until then, the un-enrolled account's sessions are skipped (no crash).
+> — an **Enterprise** `first.last@nnb24.de` and a **Max** `lastname@nnb24.de`?
+> Enroll the one you use most; **both are tracked automatically** — the client
+> detects each session's account and uploads all of them, and your admin links
+> both accounts to you in the dashboard. Nothing extra for you to do.
 
 ## Install — plugin (recommended)
 

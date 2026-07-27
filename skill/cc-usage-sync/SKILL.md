@@ -35,19 +35,15 @@ Only metadata is stored — never prompt or response text.
    different Jira key than the one recorded, it nudges you once to `/task` switch.
    (`scripts/session-prompt.sh` is a `SessionStart` hook that only maps
    cwd→sessionId so `/task` can find the live session.)
-2. **`/task` command** (`scripts/set-task.sh` + the MCP-aware command doc):
-   records the answer.
+2. **`/task` command** (`scripts/set-task.sh` + a usage-only command doc):
+   records the answer without connecting to Jira.
    - `/task KI-758` — record a key (task or epic)
    - `/task KI-758 KI-700` — task then epic
    - `/task none` — mark this session not tracked
    Appends `{sessionId, jira, epic?, cwd, ts}` to `~/.claude/cc-usage/tasks.jsonl`.
-   **Type alignment / creation (agent + Atlassian MCP):** a bare key does not
-   reveal Epic vs Task. When the MCP is connected, the agent looks it up
-   (issuetype) and records epic vs task+parent correctly. To start NEW work the
-   agent creates the issue via MCP — a Task under an Epic, or a new Epic — then
-   records it. **Never create a sub-task under a task** (tasks are the lowest
-   level tracked). When the MCP is offline, the raw key is recorded and the
-   epic-sync step resolves the type later.
+   The collector validates only key syntax. It never reads, creates, edits, or
+   authenticates to Jira. If an epic is already known, pass it explicitly as the
+   second key; backend enrichment can add metadata later.
 3. **SessionEnd sync** (`scripts/sync.sh`): runs `cc-usage --days 1 --upload`
    (scoped to `CC_USAGE_PROJECT` via `--project`) in the background when a
    session ends. Idempotent on `(user_id, session_id)` / `(user_id, day)`.
@@ -81,16 +77,11 @@ bash ~/.claude/cc-usage/bin/sync.sh
 pnpm --filter @cc-usage/collector start -- --days 30 --upload
 ```
 
-## Epic sync (MCP-bound, not run by the collector)
+## Jira boundary
 
-Task/epic mapping in the dashboard is enriched from Jira (`jira_issue` table).
-Epic metadata comes from the explicit `/task ... <EPIC>` capture plus an
-MCP-bound epic-sync step. That step resolves each task's parent epic via the
-Atlassian MCP and backfills `cc_sessions.epic_key` / `epic_summary` — it runs
-**only inside a Claude Code session** with the Atlassian MCP, never from the
-headless collector or the SessionEnd hook (employee machines hold no Jira
-credentials). See `scripts/epic-sync.md` for the procedure; the pure-DB writes
-live in `packages/collector/src/epic-backfill.ts`.
+The employee collector stores Jira keys only as usage labels. Jira enrichment
+belongs to the admin backend or the separate company Jira plugin. This plugin
+ships no Jira credentials, MCP dependency, Jira API client, or write workflow.
 
 ## Configuration
 

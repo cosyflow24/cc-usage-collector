@@ -39,7 +39,7 @@ fi
 
 # 2. Remove the installed scripts + /task command.
 rm -rf "$CC/cc-usage/bin"
-rm -f "$CC/commands/task.md"
+rm -f "$CC/commands/task.md" "$CC/commands/burn.md" "$CC/commands/cc-usage-doctor.md"
 
 # 3. Optionally purge config + attribution history.
 if [[ "$PURGE" == "--purge" ]]; then

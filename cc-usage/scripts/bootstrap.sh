@@ -13,6 +13,7 @@ for f in "$SRC"/*.sh; do
   [[ -e "$f" ]] || continue
   ln -sf "$f" "$BIN/$(basename "$f")" 2>/dev/null || true
 done
+rm -f "$BIN/jira-cache.sh" "$CC/cc-usage/identity.json"
 # Also expose the bundled collector for a manual `bash ~/.claude/cc-usage/bin/sync.sh`.
 printf 'CC_USAGE_PLUGIN_DIST=%q\n' "${CLAUDE_PLUGIN_ROOT:-}/dist" > "$CC/cc-usage/plugin-dist.env" 2>/dev/null || true
 exit 0

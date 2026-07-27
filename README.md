@@ -32,7 +32,8 @@ email, copy the token, and run:
 ```
 
 Done. Usage uploads on its own when a session ends. Update any time with
-`/plugin update`. The enrollment page is **public** (no login, no shared secret);
+`/plugin update` and check locally with `/cc-usage-doctor`. The enrollment page
+is **public** (no login, no shared secret);
 the token uploads **as you** only and can be revoked individually — you never
 touch the dashboard.
 
@@ -118,13 +119,16 @@ install.sh` keeps reusing your token (no env var needed).
 Nothing to do — usage uploads on its own when a session ends. Two commands:
 
 ```bash
-/task KI-758     # tag this session to a Jira task (reads Jira; changes nothing there)
+/task KI-758     # tag this session with an existing Jira key; no Jira connection
 /task none       # don't track this session
 /burn            # live: your current 5h rate-limit window usage + burn rate
 ```
 
 The first prompt in a monitored project pauses once to ask which Jira task it's
 for — just answer with `/task`.
+
+`cc-usage` never authenticates to Jira and cannot create, edit, comment on, or
+transition issues. Use the separate company Jira plugin for Jira work.
 
 ## Privacy
 

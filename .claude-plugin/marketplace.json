@@ -3,13 +3,13 @@
   "owner": { "name": "cosyflow24" },
   "metadata": {
     "description": "cc-usage team analytics for Claude Code — one plugin, installed from this repo.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "plugins": [
     {
       "name": "cc-usage",
       "source": "./cc-usage",
-      "description": "Track Claude Code usage (tokens, notional cost, active-time) per session/project/Jira task and upload to the team dashboard. Metadata only. Adds /task, /burn, /cc-usage-login."
+      "description": "Track Claude Code usage (tokens, notional cost, active-time) per session/project/Jira label and upload to the team dashboard. Metadata only; no Jira connection. Adds /task, /burn, /cc-usage-login, and /cc-usage-doctor."
     }
   ]
 }

@@ -189,6 +189,7 @@ Next steps:
                                      /task ABC-123 ABC-100 (task + epic)
   • Usage uploads automatically when a session ends (SessionEnd hook).
   • Manual sync:                     bash ~/.claude/cc-usage/bin/sync.sh
+  • Installation check:              bash ~/.claude/cc-usage/bin/doctor.sh
   • Preview without uploading:       pnpm --filter @cc-usage/collector start -- --days 1
 
 Cost shown in the dashboard is NOTIONAL (public API rates) — you are on an

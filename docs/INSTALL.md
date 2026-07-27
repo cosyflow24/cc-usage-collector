@@ -104,5 +104,5 @@ Removes the hooks + commands and restores `settings.json` from its backup.
 
 ## Requirements
 
-Node 22+, `git`, and the Atlassian MCP connected in Claude Code (only if you use
-`/task` to attribute sessions to Jira issues).
+Node 22+ and `git`. `/task` stores an existing Jira key as a usage label and
+needs no Jira CLI, API token, or MCP connection.

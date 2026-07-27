@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 import { Command } from "commander";
 import { analyze } from "./analyze.ts";
 import { fetchCcusageCost, fetchCcusageDailyTotal } from "./ccusage.ts";

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 #!/usr/bin/env node
 import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);

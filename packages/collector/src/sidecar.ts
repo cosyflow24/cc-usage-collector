@@ -5,7 +5,8 @@ import path from "node:path";
 /**
  * In-flow task declarations captured during sessions (by the /task command and
  * the SessionStart/End hooks). Append-only JSONL of:
- *   { "sessionId": "...", "jira": "KI-758", "epic": "KI-700", "cwd": "...", "ts": "ISO" }
+ *   { "schemaVersion": 1, "sessionId": "...", "jira": "KI-758",
+ *     "epic": "KI-700", "cwd": "...", "ts": "ISO" }
  * The latest event per session wins, so a mid-session switch is honored. An
  * explicit declaration here beats any heuristic in jira.ts.
  */

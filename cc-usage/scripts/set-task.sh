@@ -75,7 +75,7 @@ const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 if (!KEY.test(key)) { console.error("not a Jira key: " + key); process.exit(1); }
 if (epic && !KEY.test(epic)) { console.error("not a Jira key (epic): " + epic); process.exit(1); }
 
-const row = { sessionId: sid, jira: key, cwd: regCwd, ts: new Date().toISOString(), src: "task-cmd" };
+const row = { schemaVersion: 1, sessionId: sid, jira: key, cwd: regCwd, ts: new Date().toISOString(), src: "task-cmd" };
 if (epic) row.epic = epic;
 fs.appendFileSync(path.join(dir, "tasks.jsonl"), JSON.stringify(row) + "\n");
 console.log("cc-usage: session attributed to " + key + (epic ? (" (epic " + epic + ")") : ""));

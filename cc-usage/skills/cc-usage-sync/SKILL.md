@@ -40,7 +40,8 @@ Only metadata is stored — never prompt or response text.
    - `/task KI-758` — record a key (task or epic)
    - `/task KI-758 KI-700` — task then epic
    - `/task none` — mark this session not tracked
-   Appends `{sessionId, jira, epic?, cwd, ts}` to `~/.claude/cc-usage/tasks.jsonl`.
+   Appends `{schemaVersion: 1, sessionId, jira, epic?, cwd, ts}` to
+   `~/.claude/cc-usage/tasks.jsonl`.
    The collector validates only key syntax. It never reads, creates, edits, or
    authenticates to Jira. If an epic is already known, pass it explicitly as the
    second key; backend enrichment can add metadata later.

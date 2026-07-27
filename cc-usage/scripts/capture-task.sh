@@ -47,7 +47,7 @@ if (!jira) {
 }
 
 if (sid && jira) {
-  const row = { sessionId: sid, jira, cwd, ts: new Date().toISOString(), src: "hook" };
+  const row = { schemaVersion: 1, sessionId: sid, jira, cwd, ts: new Date().toISOString(), src: "hook" };
   const epic = (process.env.CC_EPIC || "").toUpperCase().match(KEY)?.[0] || "";
   if (epic) row.epic = epic;
   try { fs.appendFileSync(path.join(dir, "tasks.jsonl"), JSON.stringify(row) + "\n"); } catch {}
@@ -66,7 +66,7 @@ if (sid) {
     const account = String(oa.emailAddress || "").toLowerCase();
     const plan = String(oa.organizationType || "");
     if (account.includes("@")) {
-      const arow = { sessionId: sid, account, plan, cwd, ts: new Date().toISOString(), src: "hook-acct" };
+      const arow = { schemaVersion: 1, sessionId: sid, account, plan, cwd, ts: new Date().toISOString(), src: "hook-acct" };
       fs.appendFileSync(path.join(dir, "tasks.jsonl"), JSON.stringify(arow) + "\n");
     }
   } catch {}

@@ -3,8 +3,7 @@ import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);
 import {
   isWorkAccount
-} from "./chunk-UC5VKDIV.js";
-import "./chunk-HOACXCDS.js";
+} from "./chunk-V5XEBEJS.js";
 
 // src/upload.ts
 function wireTotals(t) {
@@ -74,13 +73,10 @@ async function httpUpload(result, opts) {
     process.stderr.write(`${skippedPersonal} session(s) on non-work accounts kept local (never uploaded).
 `);
   }
-  const audit = opts.jiraAudit ?? [];
-  if (audit.length > 0 && opts.auditUser) bucket(opts.auditUser);
   let sessions = 0;
   let daily = 0;
   let skippedUnauthorized = 0;
   for (const [user, payload] of byUser) {
-    const jiraAudit = user === opts.auditUser ? audit : [];
     const res = await fetch(opts.url, {
       method: "POST",
       headers: {
@@ -90,8 +86,7 @@ async function httpUpload(result, opts) {
       body: JSON.stringify({
         user,
         sessions: payload.sessions.map(wireSession),
-        daily: payload.daily.map(wireDaily),
-        ...jiraAudit.length > 0 ? { jiraAudit } : {}
+        daily: payload.daily.map(wireDaily)
       })
     });
     if (!res.ok) {

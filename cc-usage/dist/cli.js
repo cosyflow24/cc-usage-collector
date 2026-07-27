@@ -1,7 +1,11 @@
+#!/usr/bin/env -S npx tsx
 #!/usr/bin/env node
 import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);
 import {
+  __commonJS,
+  __require,
+  __toESM,
   defaultJiraConfig,
   isWorkAccount,
   loadJiraConfig,
@@ -9,12 +13,7 @@ import {
   resolveJiraKey,
   resolveRange,
   resolveUser
-} from "./chunk-UC5VKDIV.js";
-import {
-  __commonJS,
-  __require,
-  __toESM
-} from "./chunk-HOACXCDS.js";
+} from "./chunk-V5XEBEJS.js";
 
 // ../../node_modules/.pnpm/commander@12.1.0/node_modules/commander/lib/error.js
 var require_error = __commonJS({
@@ -3016,10 +3015,6 @@ var require_commander = __commonJS({
   }
 });
 
-// src/cli.ts
-import { resolve } from "path";
-import { pathToFileURL } from "url";
-
 // ../../node_modules/.pnpm/commander@12.1.0/node_modules/commander/esm.mjs
 var import_index = __toESM(require_commander(), 1);
 var {
@@ -3266,11 +3261,10 @@ function analyze(records, opts) {
     const sm = daySessions.get(d) ?? daySessions.set(d, /* @__PURE__ */ new Map()).get(d);
     (sm.get(r.sessionId) ?? sm.set(r.sessionId, []).get(r.sessionId)).push(r);
   }
-  const transform = opts.dayHoursTransform ?? ((_d, h) => h);
   const sessionActiveHours = /* @__PURE__ */ new Map();
   for (const [day, recs] of recsByDay) {
     recs.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const dayHours = transform(day, toActiveHours(activeMs(recs)));
+    const dayHours = toActiveHours(activeMs(recs));
     if (dayHours <= 0) continue;
     const rawBy = /* @__PURE__ */ new Map();
     let sumRaw = 0;
@@ -3616,11 +3610,6 @@ program2.name("cc-usage").description("Analyze Claude Code session logs; notiona
   const sessionAccounts = loadSessionAccounts();
   const records = await readRecords(since, until);
   const ccusageCost = await fetchCcusageCost(since, until);
-  let dayHoursTransform;
-  const localHook = process.env.CC_USAGE_LOCAL_HOOK;
-  if (localHook) {
-    ({ dayHoursTransform } = await import(pathToFileURL(resolve(localHook)).href));
-  }
   const result = analyze(records, {
     user,
     since,
@@ -3630,8 +3619,7 @@ program2.name("cc-usage").description("Analyze Claude Code session logs; notiona
     project: opts.project,
     sessionTasks,
     sessionAccounts,
-    ccusageCost,
-    dayHoursTransform
+    ccusageCost
   });
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}
@@ -3672,28 +3660,16 @@ program2.name("cc-usage").description("Analyze Claude Code session logs; notiona
     }
     const ingestUrl = process.env.CC_USAGE_INGEST_URL;
     const ingestToken = process.env.CC_USAGE_INGEST_TOKEN;
-    let res;
-    if (ingestUrl && ingestToken) {
-      const { httpUpload } = await import("./upload-P342I7AO.js");
-      const { loadJiraAudit, maxAuditTs, readAuditHwm, writeAuditHwm } = await import("./audit-MI6ZHWOH.js");
-      const lastTs = readAuditHwm();
-      const auditRows = loadJiraAudit(lastTs);
-      res = await httpUpload(toUpload, {
-        url: ingestUrl,
-        token: ingestToken,
-        jiraAudit: auditRows,
-        // Past the isWorkAccount gate above, so account is non-null here.
-        auditUser: account ?? void 0
-      });
-      if (account && auditRows.length > 0) {
-        writeAuditHwm(maxAuditTs(auditRows));
-        process.stderr.write(`Uploaded ${auditRows.length} jira-audit row(s).
-`);
-      }
-    } else {
-      const { upload } = await import("./supabase-ETDY7L7Q.js");
-      res = await upload(toUpload);
+    if (!ingestUrl || !ingestToken) {
+      throw new Error(
+        "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
+      );
     }
+    const { httpUpload } = await import("./upload-IX5JGZMX.js");
+    const res = await httpUpload(toUpload, {
+      url: ingestUrl,
+      token: ingestToken
+    });
     process.stderr.write(`Uploaded ${res.sessions} sessions, ${res.daily} daily rows.
 `);
   }

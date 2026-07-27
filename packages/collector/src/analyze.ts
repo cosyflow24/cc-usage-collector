@@ -30,14 +30,6 @@ export interface AnalyzeOptions {
   sessionAccounts?: Map<string, SessionAccount>;
   /** sessionId → authoritative ccusage cost. When present, overrides pricing.ts. */
   ccusageCost?: Map<string, CcusageSessionCost> | null;
-  /**
-   * Optional per-day active-hours transform, applied to each worked day's coarse
-   * active hours before they are apportioned to that day's sessions. Identity
-   * when absent. Because the transform feeds BOTH the daily rollup AND the
-   * per-session apportioning, the two stay consistent (Σ sessions of a day ==
-   * that day's daily active).
-   */
-  dayHoursTransform?: (day: string, hours: number) => number;
 }
 
 function emptyTotals(): TokenTotals {
@@ -289,8 +281,7 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   // Active time (KI-759), derived so per-session and daily rollups AGREE.
   // Bucket every record by calendar DAY (and, within the day, by session):
   //   1. a day's coarse active hours = ALL that day's events merged into one
-  //      timeline (concurrent sessions never double-count), then the optional
-  //      day-hours transform;
+  //      timeline (concurrent sessions never double-count);
   //   2. that day's hours are apportioned across the day's sessions by each
   //      session's share of raw same-day active. A multi-day session sums its
   //      per-day shares — so no single session can exceed a day, and the daily
@@ -304,11 +295,10 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     const sm = daySessions.get(d) ?? daySessions.set(d, new Map()).get(d)!;
     (sm.get(r.sessionId) ?? sm.set(r.sessionId, []).get(r.sessionId)!).push(r);
   }
-  const transform = opts.dayHoursTransform ?? ((_d, h) => h);
   const sessionActiveHours = new Map<string, number>();
   for (const [day, recs] of recsByDay) {
     recs.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const dayHours = transform(day, toActiveHours(activeMs(recs)));
+    const dayHours = toActiveHours(activeMs(recs));
     if (dayHours <= 0) continue;
     const rawBy = new Map<string, number>();
     let sumRaw = 0;

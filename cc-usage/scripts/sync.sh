@@ -32,12 +32,11 @@ if [[ -f "$CC/cc-usage/env" ]]; then
   set +a
 fi
 
-# Require an upload path: ingest API (preferred) OR direct Supabase (maintainer).
+# Require the employee-safe ingest API. Database credentials never belong in
+# the collector plugin.
 if [[ -z "${CC_USAGE_INGEST_URL:-}" || -z "${CC_USAGE_INGEST_TOKEN:-}" ]]; then
-  if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_SERVICE_KEY:-}${SUPABASE_KEY:-}" ]]; then
-    echo "cc-usage-sync: no upload credentials. Run /cc-usage-login <token> first." >&2
-    exit 1
-  fi
+  echo "cc-usage-sync: no upload credentials. Run /cc-usage-login <token> first." >&2
+  exit 1
 fi
 
 # Pilot scope: when CC_USAGE_PROJECT is set, only that project's sessions

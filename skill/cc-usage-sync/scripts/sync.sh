@@ -54,12 +54,11 @@ if [[ -f "$CC/cc-usage/env" ]]; then
   set +a
 fi
 
-# Require an upload path: ingest API (preferred) OR direct Supabase.
+# Require the employee-safe ingest API. Database credentials never belong in
+# the collector workflow.
 if [[ -z "${CC_USAGE_INGEST_URL:-}" || -z "${CC_USAGE_INGEST_TOKEN:-}" ]]; then
-  if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_SERVICE_KEY:-}${SUPABASE_KEY:-}" ]]; then
-    echo "cc-usage-sync: set CC_USAGE_INGEST_URL + CC_USAGE_INGEST_TOKEN (run install.sh)" >&2
-    exit 1
-  fi
+  echo "cc-usage-sync: set CC_USAGE_INGEST_URL + CC_USAGE_INGEST_TOKEN (run install.sh)" >&2
+  exit 1
 fi
 
 # NOTE: `pnpm <script> -- ARGS` forwards a literal `--` to the script, which

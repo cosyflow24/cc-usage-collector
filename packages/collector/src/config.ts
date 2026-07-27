@@ -61,7 +61,7 @@ export function loadJiraConfig(): JiraConfig {
  * Identity = the Claude OAuth account email — the SAME signal the work-account
  * gate (isWorkAccount) checks, so attribution and gating can never diverge.
  * Earlier this used git config user.email, which drifted from the OAuth account
- * (e.g. git "yu.zha@nnb24.de" vs OAuth "zha@nnb24.de"). git email / hostname
+ * (e.g. git "developer.alias@nnb24.de" vs OAuth "developer@nnb24.de"). git email / hostname
  * remain as fallbacks only when not signed in. CC_USAGE_USER still overrides all.
  */
 export function resolveUser(): string {

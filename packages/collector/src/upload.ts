@@ -1,4 +1,3 @@
-import type { AuditRow } from "./audit.ts";
 import { isWorkAccount } from "./config.ts";
 import type {
   AnalysisResult,
@@ -16,13 +15,6 @@ import type {
  * enterprise account earlier, max later). The ingest endpoint requires every
  * row in a payload to match payload.user (so a leaked token can't impersonate
  * others), so we split by user and POST one payload per account.
- *
- * Phase 3: the automated-Jira-action audit trail (jiraAudit) rides along on the
- * resolved work account's payload. The audit file has no user, so all its rows
- * belong to `auditUser` (the currently signed-in work account); the route stamps
- * user_id = body.user, reusing the anti-impersonation invariant. If that account
- * has no sessions this run, we still POST a standalone {sessions:[],daily:[],
- * jiraAudit:[...]} — the route accepts empty arrays.
  */
 // The wire payload is built by EXPLICIT field projection — never by serializing
 // the in-memory objects. Metadata-only by construction: any field a future
@@ -76,7 +68,7 @@ function wireDaily(d: DailySummary): DailySummary {
 
 export async function httpUpload(
   result: AnalysisResult,
-  opts: { url: string; token: string; jiraAudit?: AuditRow[]; auditUser?: string },
+  opts: { url: string; token: string },
 ): Promise<{ sessions: number; daily: number }> {
   const byUser = new Map<string, { sessions: SessionSummary[]; daily: DailySummary[] }>();
   const bucket = (u: string) => {
@@ -105,16 +97,10 @@ export async function httpUpload(
     process.stderr.write(`${skippedPersonal} session(s) on non-work accounts kept local (never uploaded).\n`);
   }
 
-  // Ensure the work account has a bucket so its audit rows have somewhere to ride,
-  // even when it produced no sessions today.
-  const audit = opts.jiraAudit ?? [];
-  if (audit.length > 0 && opts.auditUser) bucket(opts.auditUser);
-
   let sessions = 0;
   let daily = 0;
   let skippedUnauthorized = 0;
   for (const [user, payload] of byUser) {
-    const jiraAudit = user === opts.auditUser ? audit : [];
     const res = await fetch(opts.url, {
       method: "POST",
       headers: {
@@ -125,7 +111,6 @@ export async function httpUpload(
         user,
         sessions: payload.sessions.map(wireSession),
         daily: payload.daily.map(wireDaily),
-        ...(jiraAudit.length > 0 ? { jiraAudit } : {}),
       }),
     });
     if (!res.ok) {

@@ -1,6 +1,6 @@
 {
   "name": "cc-usage",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Team usage tracking for Claude Code — tokens, notional cost, and active-time per session/project/Jira label, uploaded to your team dashboard. Metadata only, never prompts or Jira credentials. Installs /task, /burn, /cc-usage-doctor, and a daily upload hook.",
   "author": { "name": "cosyflow24" },
   "homepage": "https://github.com/cosyflow24/cc-usage-collector",

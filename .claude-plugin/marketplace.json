@@ -3,7 +3,7 @@
   "owner": { "name": "cosyflow24" },
   "metadata": {
     "description": "cc-usage team analytics for Claude Code — one plugin, installed from this repo.",
-    "version": "0.3.1"
+    "version": "0.3.2"
   },
   "plugins": [
     {

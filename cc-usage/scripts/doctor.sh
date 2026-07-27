@@ -9,6 +9,23 @@ ok() { printf 'ok: %s\n' "$*"; }
 bad() { printf 'fail: %s\n' "$*" >&2; FAIL=1; }
 
 command -v node >/dev/null 2>&1 && ok "node $(node -v)" || bad "Node.js is missing"
+DIST="${CC_USAGE_PLUGIN_DIST:-${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/dist}}"
+if [[ -z "$DIST" ]]; then
+  ENTRY="${BASH_SOURCE[0]}"
+  while [[ -L "$ENTRY" ]]; do
+    ENTRY_DIR="$(cd "$(dirname "$ENTRY")" && pwd)"
+    ENTRY_TARGET="$(readlink "$ENTRY")"
+    [[ "$ENTRY_TARGET" == /* ]] && ENTRY="$ENTRY_TARGET" || ENTRY="${ENTRY_DIR}/${ENTRY_TARGET}"
+  done
+  DIST="$(cd "$(dirname "$ENTRY")/../dist" 2>/dev/null && pwd || true)"
+fi
+if [[ -n "$DIST" && -f "$DIST/cli.js" ]]; then
+  node "$DIST/cli.js" --help >/dev/null 2>&1 \
+    && ok "standalone collector bundle" \
+    || bad "standalone collector bundle cannot execute"
+else
+  bad "plugin collector bundle is missing"
+fi
 [[ -f "$STATE/env" ]] && ok "$STATE/env" || bad "upload configuration is missing"
 if [[ -f "$STATE/env" ]]; then
   grep -q '^CC_USAGE_INGEST_URL=' "$STATE/env" && ok "ingest URL configured" || bad "ingest URL missing"

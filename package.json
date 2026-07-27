@@ -1,6 +1,6 @@
 {
   "name": "cc-usage-collector",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Claude Code usage collector: parse local session logs and upload usage metadata to the team backend. Employee-facing; contains no dashboard/server code. Built on ccusage.",
   "type": "module",

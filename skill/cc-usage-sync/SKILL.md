@@ -5,8 +5,8 @@ description: Sync this machine's Claude Code AI spend to the team backend. Parse
   branch, Jira task/epic) and uploads them. Also drives per-session task
   attribution — at each session start it asks which Jira epic/task you're on — and
   the /task command records it. Use when the user says "sync my CC usage", "upload
-  usage", "record today's Claude Code spend", "attribute this session", "同步用量",
-  "上传用量统计", or when a daily usage report is requested. Runs locally; metadata only.
+  usage", "record today's Claude Code spend", "attribute this session", or when
+  a daily usage report is requested. Runs locally; metadata only.
 allowed-tools: [Bash, Read]
 ---
 

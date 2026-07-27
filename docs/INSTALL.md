@@ -3,6 +3,11 @@
 This repo installs **usage tracking** — the team-wide metric (tokens, cost,
 active-time per session/project/Jira-task). Nothing else runs on your machine.
 
+A Jira key is only an attribution label. This plugin has no Jira credentials,
+MCP, CLI, or API access. Jira work uses the separate `nnb-jira` plugin. There is
+no supported Beta variant of either plugin, and CCUsage currently supports
+Claude Code only.
+
 > Enter your `@nnb24.de` Claude work email below. Two logins (Enterprise
 > `first.last@` + Max `lastname@`)? Enroll the one you use most — **both are
 > tracked automatically** (the client uploads every account; your admin links
@@ -25,7 +30,13 @@ token, and run:
 /cc-usage-login <your-token>
 ```
 
-Update any time: `/plugin update`.
+Update any time:
+
+```bash
+claude plugin update cc-usage@cc-usage
+```
+
+Then start a new Claude Code session and run `/cc-usage-doctor`.
 
 ## First time — script (alternative)
 
@@ -95,6 +106,15 @@ bash install.sh          # finds your saved token → runs unattended, no re-enr
 ```
 
 ## Uninstall
+
+Plugin installation:
+
+```bash
+claude plugin uninstall cc-usage@cc-usage
+claude plugin marketplace remove cc-usage  # optional
+```
+
+Script installation:
 
 ```bash
 bash skill/cc-usage-sync/scripts/uninstall-hooks.sh

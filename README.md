@@ -8,6 +8,11 @@ your prompts or responses, no exact clock times.** For planning and cost insight
 This repository is the **collector only**. The dashboard/server code lives in a
 separate private repo — you don't need it and never see it.
 
+It is also separate from `nnb-jira`: a Jira key here is only a usage label.
+CCUsage has no Jira credentials and cannot perform Jira operations. There is no
+supported `cc-usage-beta` or `nnb-jira-beta` plugin. This collector plugin
+currently supports Claude Code only, not Codex.
+
 > **Which email?** Enter your `@nnb24.de` Claude work email. Have **two** logins
 > — an **Enterprise** `first.last@nnb24.de` and a **Max** `lastname@nnb24.de`?
 > Enroll the one you use most; **both are tracked automatically** — the client
@@ -31,8 +36,9 @@ email, copy the token, and run:
 /cc-usage-login <your-token>
 ```
 
-Done. Usage uploads on its own when a session ends. Update any time with
-`/plugin update` and check locally with `/cc-usage-doctor`. The enrollment page
+Done. Usage uploads on its own when a session ends. Update with
+`claude plugin update cc-usage@cc-usage` and check locally with
+`/cc-usage-doctor`. The enrollment page
 is **public** (no login, no shared secret);
 the token uploads **as you** only and can be revoked individually — you never
 touch the dashboard.
@@ -84,7 +90,13 @@ twice. To switch cleanly:
 
 ## Updating
 
-**Plugin install:** `/plugin update` in Claude Code. That's it.
+**Plugin install:**
+
+```bash
+claude plugin update cc-usage@cc-usage
+```
+
+Start a new Claude Code session and run `/cc-usage-doctor`.
 
 **Script install:** point Claude Code at this repo and say **"update cc-usage"**
 (it reads [docs/INSTALL.md](docs/INSTALL.md)), or by hand:
@@ -129,6 +141,16 @@ for — just answer with `/task`.
 
 `cc-usage` never authenticates to Jira and cannot create, edit, comment on, or
 transition issues. Use the separate company Jira plugin for Jira work.
+
+## Uninstalling the plugin
+
+```bash
+claude plugin uninstall cc-usage@cc-usage
+claude plugin marketplace remove cc-usage  # optional: remove its marketplace too
+```
+
+This removes the plugin. Personal collector state under `~/.claude/cc-usage/`
+is kept unless you explicitly use the script installer's `--purge` cleanup.
 
 ## Privacy
 

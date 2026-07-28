@@ -83,7 +83,8 @@ const hint = sugg.length ? ("Recent here: " + sugg.join(", ") + ". ") : "";
 const line =
   "[cc-usage] " + hint +
   "Set the Jira task for this session:  /task last (reuse most recent)  |  " +
-  "/task <KEY>  |  /task <describe new work> (created in German)  |  /task none.";
+  "/task <KEY> (existing issue)  |  /task none. " +
+  "New issue? Create it via the company Jira plugin first, then /task <the new KEY>.";
 const ctx =
   "At the very START of your first reply, show the developer this line VERBATIM " +
   "(do not translate it, never Chinese), then continue normally. Hint only, not a blocker:\n" +

@@ -163,12 +163,12 @@ const suggestLine = sugg.length
 
 const reason =
   "[cc-usage] Which Jira issue is this session for? " +
-  "Run  /task <KEY>  (e.g. /task KI-758) for an existing issue, " +
-  "/task <describe new work>  to create one (written in German), or  /task none  to skip. " +
+  "Run  /task <KEY>  (e.g. /task KI-758) for an existing issue, or  /task none  to skip. " +
+  "No existing key? Create the issue via the company Jira plugin first, then  /task <the new KEY>. " +
   "You will only be asked once per session.\n" +
   "[DE] Zu welchem Jira-Vorgang gehoert diese Session? " +
-  "Fuehre  /task <KEY>  aus (z. B. /task KI-758), " +
-  "/task <neue Arbeit beschreiben>  zum Anlegen (auf Deutsch) oder  /task none  zum Ueberspringen." +
+  "Fuehre  /task <KEY>  aus (z. B. /task KI-758) fuer einen bestehenden Vorgang, oder  /task none. " +
+  "Noch kein Key? Lege den Vorgang zuerst ueber das Firmen-Jira-Plugin an, dann  /task <der neue KEY>." +
   suggestLine;
 process.stdout.write(JSON.stringify({ decision: "block", reason }));
 

@@ -9,18 +9,20 @@ Record usage attribution only. This command must never read, create, edit,
 transition, comment on, or authenticate to Jira. It needs no Jira CLI, API token,
 MCP, or cached Jira identity.
 
-Accepted forms:
+The attribution is recorded **deterministically** by the line below: it runs
+`set-task.sh` with your argument the moment `/task` is invoked, so binding never
+depends on the assistant choosing to act. `set-task.sh` itself validates the
+argument (`last`, `none`, a `KEY`, or `TASK EPIC`) and rejects anything else.
 
-- `last` — run `bash ~/.claude/cc-usage/bin/set-task.sh last`.
-- `none` — run `bash ~/.claude/cc-usage/bin/set-task.sh none`.
-- `KEY` — validate `^[A-Z][A-Z0-9]+-[0-9]+$`, then run
-  `bash ~/.claude/cc-usage/bin/set-task.sh KEY`.
-- `TASK EPIC` — validate both keys, then run
-  `bash ~/.claude/cc-usage/bin/set-task.sh TASK EPIC`.
+!`bash ~/.claude/cc-usage/bin/set-task.sh $ARGUMENTS`
 
-Do not infer whether a key is a Task, Epic, Story, Bug, or sub-task. Do not
-invent, validate, or create a key. If the user describes new work instead of
-providing an existing key, explain that `/task` only records an existing key and
-ask them to create the Jira issue through the separate company Jira plugin.
+Now report to the user, in their language, exactly what `set-task.sh` printed above:
 
-Confirm only what `set-task.sh` recorded, in the user's language.
+- Success (`session attributed to …` or `marked not tracked`): confirm it, nothing more.
+- `not a Jira key: …`: the argument was not an existing key. Explain that `/task` only
+  records an EXISTING key (`/task KI-123`, `/task last`, or `/task none`) and that
+  creating a NEW issue is done through the separate company Jira plugin first — then
+  run `/task <the new KEY>`. Do not invent, validate, or create a key yourself.
+- `no previous task recorded` or the usage text: ask the user to pass an explicit key.
+
+Do not infer whether a key is a Task, Epic, Story, Bug, or sub-task.

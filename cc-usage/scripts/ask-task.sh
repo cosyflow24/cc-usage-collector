@@ -90,9 +90,9 @@ if (declaredRowV) {
       writeMarker(mark);
       const reason =
         `[cc-usage] Task drift? This session is recorded as ${declared}, but the git branch points to ${bk}. ` +
-        `Run  /task ${bk}  to switch, or ignore to keep ${declared}.\n` +
+        `Run  /cc-usage:task ${bk}  to switch, or ignore to keep ${declared}.\n` +
         `[DE] Task gewechselt? Diese Session ist als ${declared} erfasst, der Branch zeigt aber auf ${bk}. ` +
-        `Fuehre  /task ${bk}  zum Wechseln aus, oder ignoriere es.`;
+        `Fuehre  /cc-usage:task ${bk}  zum Wechseln aus, oder ignoriere es.`;
       process.stdout.write(JSON.stringify({ decision: "block", reason }));
       process.exit(0);
     }
@@ -110,10 +110,10 @@ if (declaredRowV) {
       const ageD = Math.round(ageH / 24 * 10) / 10;
       const reason =
         `[cc-usage] Still working on ${declared}? This session was bound to it ${ageD}d ago. ` +
-        `Confirm with  /task last  (keep), switch with  /task <KEY>, or  /task none  to stop tracking. ` +
+        `Confirm with  /cc-usage:task last  (keep), switch with  /cc-usage:task <KEY>, or  /cc-usage:task none  to stop tracking. ` +
         `Asked at most once per day.\n` +
         `[DE] Arbeitest du noch an ${declared}? Diese Session wurde vor ${ageD} Tag(en) darauf gebucht. ` +
-        `Bestaetige mit  /task last  (behalten), wechsle mit  /task <KEY>  oder  /task none. ` +
+        `Bestaetige mit  /cc-usage:task last  (behalten), wechsle mit  /cc-usage:task <KEY>  oder  /cc-usage:task none. ` +
         `Hoechstens einmal pro Tag gefragt.`;
       process.stdout.write(JSON.stringify({ decision: "block", reason }));
     }
@@ -156,19 +156,19 @@ const sugg = recent.map((r) => r.key + " (" + ago(r.ts) + ")");
 if (bk && !recent.some((r) => r.key === bk)) sugg.push(bk + " (branch)");
 const suggestLine = sugg.length
   ? ("\n[cc-usage] Recent in this folder: " + sugg.join(", ") +
-     " — reuse the most recent with  /task last  (or  /task <KEY>)." +
+     " — reuse the most recent with  /cc-usage:task last  (or  /cc-usage:task <KEY>)." +
      "\n[DE] Zuletzt in diesem Ordner: " + sugg.join(", ") +
-     " — den letzten uebernehmen mit  /task last  (oder  /task <KEY>).")
+     " — den letzten uebernehmen mit  /cc-usage:task last  (oder  /cc-usage:task <KEY>).")
   : "";
 
 const reason =
   "[cc-usage] Which Jira issue is this session for? " +
-  "Run  /task <KEY>  (e.g. /task KI-758) for an existing issue, or  /task none  to skip. " +
-  "No existing key? Create the issue via the company Jira plugin first, then  /task <the new KEY>. " +
+  "Run  /cc-usage:task <KEY>  (e.g. /cc-usage:task KI-758) for an existing issue, or  /cc-usage:task none  to skip. " +
+  "No existing key? Create the issue via the company Jira plugin first, then  /cc-usage:task <the new KEY>. " +
   "You will only be asked once per session.\n" +
   "[DE] Zu welchem Jira-Vorgang gehoert diese Session? " +
-  "Fuehre  /task <KEY>  aus (z. B. /task KI-758) fuer einen bestehenden Vorgang, oder  /task none. " +
-  "Noch kein Key? Lege den Vorgang zuerst ueber das Firmen-Jira-Plugin an, dann  /task <der neue KEY>." +
+  "Fuehre  /cc-usage:task <KEY>  aus (z. B. /cc-usage:task KI-758) fuer einen bestehenden Vorgang, oder  /cc-usage:task none. " +
+  "Noch kein Key? Lege den Vorgang zuerst ueber das Firmen-Jira-Plugin an, dann  /cc-usage:task <der neue KEY>." +
   suggestLine;
 process.stdout.write(JSON.stringify({ decision: "block", reason }));
 

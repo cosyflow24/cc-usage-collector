@@ -6,7 +6,7 @@
 // Each handler returns the hook-output object to print (or null = pass-through).
 // Callers must always exit 0; diagnostics go to hook.err, never stdout.
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync,
+  existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync,
   rmSync, writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -179,15 +179,19 @@ function ownsCompat(path) {
   } catch { return false; }
 }
 
+// Remove ONLY the known pre-plugin script symlinks, and only when they still
+// resolve into a cc-usage scripts/ dir. Never touches anything else in bin/.
+const OLD_SCRIPTS = [
+  "ask-task.sh", "bootstrap.sh", "burn.sh", "capture-task.sh",
+  "doctor.sh", "session-prompt.sh", "set-task.sh",
+];
 function pruneOldSymlinks(bin) {
-  let entries = [];
-  try { entries = readdirSync(bin); } catch { return; }
-  for (const name of entries) {
-    if (name === "sync.sh") continue;
+  for (const name of OLD_SCRIPTS) {
     const p = join(bin, name);
     try {
-      if (!isSymlink(p)) continue;
-      if (/(?:^|[\\/])cc-usage(?:[\\/].*)?[\\/]scripts[\\/]/.test(readlinkSync(p))) rmSync(p, { force: true });
+      if (isSymlink(p) && /(?:^|[\\/])cc-usage(?:[\\/].*)?[\\/]scripts[\\/]/.test(readlinkSync(p))) {
+        rmSync(p, { force: true });
+      }
     } catch { /* ignore */ }
   }
 }

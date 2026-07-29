@@ -28,12 +28,14 @@ export function loadCredentials({ notify = false } = {}) {
   const legacyToken = legacy.CC_USAGE_INGEST_TOKEN || "";
   if (/^ccu_[A-Za-z0-9_-]+$/.test(legacyToken)) {
     const url = legacy.CC_USAGE_INGEST_URL || cfg.ingestUrl;
-    const email = cfg.email || readOauthEmail();
+    // Always a concrete, stable keyring account so store/read is deterministic
+    // (never the service-wide fuzzy match) — critical before deleting the plaintext.
+    const email = cfg.email || readOauthEmail() || "default";
     try {
       storeToken(email, legacyToken);
-      if (loadToken({ email }) === legacyToken) { // verify round-trip
+      if (loadToken({ email }) === legacyToken) { // verify exact-account round-trip
         writeConfig({ ingestUrl: url, email, project: legacy.CC_USAGE_PROJECT || cfg.project });
-        stripLegacyToken(url);
+        stripLegacyToken();
         if (notify) process.stderr.write("cc-usage: migrated your token from the plaintext env file into the OS keyring.\n");
       }
     } catch (error) {

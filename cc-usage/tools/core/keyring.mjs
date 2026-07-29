@@ -31,7 +31,12 @@ export function storeToken(email, token) {
   if (platform() === "win32") {
     throw new Error("Windows keyring is not supported yet; run cc-usage on macOS/Linux");
   }
-  writeFileSync(tokenFile, token, { mode: 0o600 });
+  // Drop any existing file OR symlink first (rmSync removes the link itself, not
+  // its target), then create the token file with an EXCLUSIVE open (flag "wx"):
+  // if anything — including a re-planted symlink — races into place between the
+  // two calls, "wx" fails with EEXIST instead of following it onto another path.
+  rmSync(tokenFile, { force: true });
+  writeFileSync(tokenFile, token, { flag: "wx", mode: 0o600 });
   chmodSync(tokenFile, 0o600);
   process.stderr.write(`WARNING: OS keyring unavailable; token stored in ${tokenFile} (mode 600).\n`);
   return tokenFile;

@@ -2,7 +2,7 @@
 // Unified cc-usage CLI. One dependency-free ESM entry point over the collector
 // bundle + OS-keyring credentials + the Claude Code hooks. Mirrors nnb-jira's
 // tools/jira.mjs packaging (dispatch, options(), hiddenQuestion(), launcher).
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -91,7 +91,7 @@ async function login(args) {
     token = (await hiddenQuestion("cc-usage upload token (input hidden): ")).trim();
   }
   if (!/^ccu_[A-Za-z0-9_-]+$/.test(token)) fail("that does not look like a cc-usage token (expected ccu_...)", 1);
-  const email = cfg.email || readOauthEmail();
+  const email = cfg.email || readOauthEmail() || "default"; // stable, non-empty keyring account
   const where = storeToken(email, token);
   writeConfig({ ingestUrl, email, project: cfg.project });
   installLauncher();
@@ -242,10 +242,15 @@ async function main() {
     try { runHook(sub, payload); } catch (error) {
       try {
         mkdirSync(STATE_DIR, { recursive: true });
-        appendFileSync(join(STATE_DIR, "hook.err"), `${new Date().toISOString()} ${sub}: ${error.stack || error.message}\n`);
+        const errFile = join(STATE_DIR, "hook.err");
+        try { chmodSync(errFile, 0o600); } catch { /* not created yet */ } // tighten before writing
+        appendFileSync(errFile, `${new Date().toISOString()} ${sub}: ${error.message}\n`, { mode: 0o600 });
       } catch { /* ignore */ }
     }
-    process.exit(0);
+    // Do NOT process.exit() here — that can truncate a buffered stdout write and
+    // corrupt the hook JSON. Returning lets the event loop drain stdout, then exit 0.
+    process.exitCode = 0;
+    return;
   }
 
   if (!command || ["--help", "-h", "help"].includes(command)) return help(args[0]);

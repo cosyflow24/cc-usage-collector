@@ -75,16 +75,18 @@ export function readLegacyEnv() {
   return result;
 }
 
-// Rewrite the legacy env file token-less after migration (keep the URL line so a
-// manual `bash bin/sync.sh` still finds the endpoint, but the token now lives in
-// the keyring). Best-effort — never throws.
-export function stripLegacyToken(ingestUrl) {
+// Remove ONLY the token line from the legacy env file after migration — every
+// other line (URL, project, comments, anything the user added) is preserved.
+// Best-effort — never throws.
+export function stripLegacyToken() {
   try {
     if (!existsSync(legacyEnvFile)) return;
     const stamp = new Date().toISOString().slice(0, 10);
-    const body = "# cc-usage env — token moved to the OS keyring (cc-usage-ingest-token) on "
-      + `${stamp}. Managed by the cc-usage CLI; do not commit.\n`
-      + `CC_USAGE_INGEST_URL=${ingestUrl || DEFAULT_INGEST_URL}\n`;
+    const kept = readFileSync(legacyEnvFile, "utf8")
+      .split(/\r?\n/)
+      .filter((l) => !/^CC_USAGE_INGEST_TOKEN=/.test(l));
+    const note = `# cc-usage: token moved to the OS keyring (cc-usage-ingest-token) on ${stamp}.`;
+    const body = `${[note, ...kept].join("\n").replace(/\n+$/, "")}\n`;
     writeFileSync(legacyEnvFile, body, { mode: 0o600 });
     if (platform() !== "win32") chmodSync(legacyEnvFile, 0o600);
   } catch { /* never block on cleanup */ }

@@ -59,7 +59,7 @@ The installer is idempotent and will:
 2. Install the collector's dependencies (this repo has no dashboard, so it's small).
 3. Save your personal upload token (from the env var above, or it prints the
    `/enroll` page URL and waits for you to paste one).
-4. Wire up the Claude Code hooks and the `/task` + `/burn` commands.
+4. Wire up the Claude Code hooks and the `/cc-usage:task` + `/burn` commands.
 5. Do a dry run (no upload) to prove parsing works.
 
 Requirements: signed into your **@nnb24.de** work account in Claude Code (Max or
@@ -69,7 +69,7 @@ Enterprise). Personal accounts are ignored and never uploaded.
 
 You don't have to switch — the script install keeps working. But the plugin
 updates in one command and needs no terminal. **Do NOT run both**: each wires its
-own hooks, so having both = every session uploads twice and asks for `/task`
+own hooks, so having both = every session uploads twice and asks for `/cc-usage:task`
 twice. To switch cleanly:
 
 1. Remove the script's hooks (this **keeps** your token + history in
@@ -131,13 +131,13 @@ install.sh` keeps reusing your token (no env var needed).
 Nothing to do — usage uploads on its own when a session ends. Two commands:
 
 ```bash
-/task KI-758     # tag this session with an existing Jira key; no Jira connection
-/task none       # don't track this session
+/cc-usage:task KI-758     # tag this session with an existing Jira key; no Jira connection
+/cc-usage:task none       # don't track this session
 /burn            # live: your current 5h rate-limit window usage + burn rate
 ```
 
 The first prompt in a monitored project pauses once to ask which Jira task it's
-for — just answer with `/task`.
+for — just answer with `/cc-usage:task`.
 
 `cc-usage` never authenticates to Jira and cannot create, edit, comment on, or
 transition issues. Use the separate company Jira plugin for Jira work.

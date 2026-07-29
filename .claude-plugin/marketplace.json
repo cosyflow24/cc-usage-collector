@@ -1,9 +1,11 @@
 {
   "name": "cc-usage",
-  "owner": { "name": "cosyflow24" },
+  "owner": {
+    "name": "cosyflow24"
+  },
   "metadata": {
     "description": "cc-usage team analytics for Claude Code — one plugin, installed from this repo.",
-    "version": "0.3.2"
+    "version": "0.4.0"
   },
   "plugins": [
     {

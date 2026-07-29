@@ -1,0 +1,15 @@
+#!/bin/sh
+# Launcher shim for the cc-usage CLI. Walks the symlink chain to its real
+# location (so ~/.local/bin/cc-usage -> <plugin>/tools/cc-usage resolves the
+# sibling cc-usage.mjs), then execs node. Clone of nnb-jira's tools/jira.
+set -eu
+ENTRY=$0
+while [ -L "$ENTRY" ]; do
+  LINK=$(readlink "$ENTRY")
+  case "$LINK" in
+    /*) ENTRY=$LINK ;;
+    *) ENTRY=$(CDPATH= cd -- "$(dirname -- "$ENTRY")" && cd -- "$(dirname -- "$LINK")" && pwd)/$(basename -- "$LINK") ;;
+  esac
+done
+TOOL_DIR=$(CDPATH= cd -- "$(dirname -- "$ENTRY")" && pwd)
+exec node "$TOOL_DIR/cc-usage.mjs" "$@"

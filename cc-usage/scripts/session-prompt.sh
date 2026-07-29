@@ -82,8 +82,9 @@ const hint = sugg.length ? ("Recent here: " + sugg.join(", ") + ". ") : "";
 // never Chinese) so the keys/commands survive.
 const line =
   "[cc-usage] " + hint +
-  "Set the Jira task for this session:  /task last (reuse most recent)  |  " +
-  "/task <KEY>  |  /task <describe new work> (created in German)  |  /task none.";
+  "Set the Jira task for this session:  /cc-usage:task last (reuse most recent)  |  " +
+  "/cc-usage:task <KEY> (existing issue)  |  /cc-usage:task none. " +
+  "New issue? Create it via the company Jira plugin first, then /cc-usage:task <the new KEY>.";
 const ctx =
   "At the very START of your first reply, show the developer this line VERBATIM " +
   "(do not translate it, never Chinese), then continue normally. Hint only, not a blocker:\n" +

@@ -10,7 +10,7 @@
 #   4. Prompt once for CC_USAGE_INGEST_URL + CC_USAGE_INGEST_TOKEN and persist
 #      them (plus the repo path) to ~/.claude/cc-usage/env.
 #   5. Merge SessionStart + SessionEnd hooks into ~/.claude/settings.json and
-#      install the /task command (via skill/cc-usage-sync/scripts/install-hooks.sh).
+#      install the /cc-usage:task command (via skill/cc-usage-sync/scripts/install-hooks.sh).
 #   6. Dry-run: cc-usage --days 1 (no upload) to prove parsing works.
 #   7. Print success + next steps.
 set -euo pipefail
@@ -162,8 +162,8 @@ umask 077
 chmod 600 "$ENV_FILE"
 ok "credentials saved to $ENV_FILE (chmod 600)"
 
-# --- 5. hooks + /task command ----------------------------------------------
-say "Installing Claude Code hooks + /task command"
+# --- 5. hooks + /cc-usage:task command ----------------------------------------------
+say "Installing Claude Code hooks + /cc-usage:task command"
 bash "$ROOT/skill/cc-usage-sync/scripts/install-hooks.sh"
 
 # --- 6. dry run -------------------------------------------------------------
@@ -184,9 +184,9 @@ $(ok "cc-usage installed.")
 Next steps:
   • Just work as usual. At each session start, Claude will ask which Jira
     epic/task the session is for — answer with a key (e.g. ABC-123) and it
-    runs /task for you, or say "none".
-  • Set a task manually any time:   /task ABC-123        (task only)
-                                     /task ABC-123 ABC-100 (task + epic)
+    runs /cc-usage:task for you, or say "none".
+  • Set a task manually any time:   /cc-usage:task ABC-123        (task only)
+                                     /cc-usage:task ABC-123 ABC-100 (task + epic)
   • Usage uploads automatically when a session ends (SessionEnd hook).
   • Manual sync:                     bash ~/.claude/cc-usage/bin/sync.sh
   • Installation check:              bash ~/.claude/cc-usage/bin/doctor.sh

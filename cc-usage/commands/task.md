@@ -9,20 +9,21 @@ Record usage attribution only. This command must never read, create, edit,
 transition, comment on, or authenticate to Jira. It needs no Jira CLI, API token,
 MCP, or cached Jira identity.
 
-The attribution is recorded **deterministically** by the line below: it runs
-`set-task.sh` with your argument the moment `/cc-usage:task` is invoked, so binding never
-depends on the assistant choosing to act. `set-task.sh` itself validates the
-argument (`last`, `none`, a `KEY`, or `TASK EPIC`) and rejects anything else.
+The argument is exactly one of: `last`, `none`, a single Jira KEY, or `TASK EPIC`
+(two keys). **Validate it first, then run `set-task.sh` with only the validated
+value(s)** — never pass raw, unvalidated, or free-text input to the shell:
 
-!`bash ~/.claude/cc-usage/bin/set-task.sh $ARGUMENTS 2>&1 || true`
+- `last` → run `bash ~/.claude/cc-usage/bin/set-task.sh last`
+- `none` → run `bash ~/.claude/cc-usage/bin/set-task.sh none`
+- a KEY matching `^[A-Z][A-Z0-9]+-[0-9]+$` → run `bash ~/.claude/cc-usage/bin/set-task.sh <KEY>`
+- two such KEYs `TASK EPIC` → run `bash ~/.claude/cc-usage/bin/set-task.sh <TASK> <EPIC>`
 
-Now report to the user, in their language, exactly what `set-task.sh` printed above:
+If the argument is anything else — free text, a description of new work, or shell
+metacharacters — do NOT run the command. Explain that `/cc-usage:task` only records
+an EXISTING key (`/cc-usage:task KI-123`, `/cc-usage:task last`, or
+`/cc-usage:task none`); creating a NEW issue is done through the separate company
+Jira plugin first, then `/cc-usage:task <the new KEY>`. Do not infer whether a key
+is a Task, Epic, Story, Bug, or sub-task, and do not invent, validate against Jira,
+or create a key.
 
-- Success (`session attributed to …` or `marked not tracked`): confirm it, nothing more.
-- `not a Jira key: …`: the argument was not an existing key. Explain that `/cc-usage:task` only
-  records an EXISTING key (`/cc-usage:task KI-123`, `/cc-usage:task last`, or `/cc-usage:task none`) and that
-  creating a NEW issue is done through the separate company Jira plugin first — then
-  run `/cc-usage:task <the new KEY>`. Do not invent, validate, or create a key yourself.
-- `no previous task recorded` or the usage text: ask the user to pass an explicit key.
-
-Do not infer whether a key is a Task, Epic, Story, Bug, or sub-task.
+Confirm only what `set-task.sh` printed, in the user's language.

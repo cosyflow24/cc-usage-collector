@@ -19,11 +19,16 @@ CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 DIST="${CC_USAGE_PLUGIN_DIST:-}"
 if [[ -z "$DIST" ]]; then
   self="${BASH_SOURCE[0]}"
-  while [[ -L "$self" ]]; do
+  hops=0
+  # Bound the walk (SYMLOOP_MAX is ~32) so a symlink cycle can't spin forever;
+  # if we hit the cap the ../dist resolve below just fails gracefully.
+  while [[ -L "$self" ]] && (( hops++ < 40 )); do
     link="$(readlink "$self")"
     if [[ "$link" = /* ]]; then self="$link"; else self="$(cd "$(dirname "$self")" && cd "$(dirname "$link")" && pwd)/$(basename "$link")"; fi
   done
-  DIST="$(cd "$(dirname "$self")/../dist" 2>/dev/null && pwd || true)"
+  # Still a symlink → chain too deep/cyclic; leave DIST empty so the not-found
+  # guard below reports it instead of guessing from a half-resolved path.
+  if [[ -L "$self" ]]; then DIST=""; else DIST="$(cd "$(dirname "$self")/../dist" 2>/dev/null && pwd || true)"; fi
 fi
 if [[ -z "$DIST" || ! -f "$DIST/cli.js" ]]; then
   echo "cc-usage-sync: bundled collector not found (looked in '${DIST:-unset}'). Reinstall the plugin." >&2

@@ -11,11 +11,24 @@ set -euo pipefail
 DAYS="${1:-1}"
 CC="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# Locate the bundled collector. Prefer the hook-provided dist; fall back to the
-# dist next to this script's plugin root (scripts/ -> ../dist).
+# Locate the bundled collector. Prefer the hook-provided dist; else resolve it
+# relative to this script's REAL location. A manual/skill run usually invokes this
+# via a symlink (~/.claude/cc-usage/bin/sync.sh -> <plugin>/scripts/sync.sh), so we
+# must follow the symlink chain before ../dist — otherwise ../dist resolves to the
+# bin dir and the collector is reported "not found (looked in 'unset')".
 DIST="${CC_USAGE_PLUGIN_DIST:-}"
 if [[ -z "$DIST" ]]; then
-  DIST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../dist" 2>/dev/null && pwd || true)"
+  self="${BASH_SOURCE[0]}"
+  hops=0
+  # Bound the walk (SYMLOOP_MAX is ~32) so a symlink cycle can't spin forever;
+  # if we hit the cap the ../dist resolve below just fails gracefully.
+  while [[ -L "$self" ]] && (( hops++ < 40 )); do
+    link="$(readlink "$self")"
+    if [[ "$link" = /* ]]; then self="$link"; else self="$(cd "$(dirname "$self")" && cd "$(dirname "$link")" && pwd)/$(basename "$link")"; fi
+  done
+  # Still a symlink → chain too deep/cyclic; leave DIST empty so the not-found
+  # guard below reports it instead of guessing from a half-resolved path.
+  if [[ -L "$self" ]]; then DIST=""; else DIST="$(cd "$(dirname "$self")/../dist" 2>/dev/null && pwd || true)"; fi
 fi
 if [[ -z "$DIST" || ! -f "$DIST/cli.js" ]]; then
   echo "cc-usage-sync: bundled collector not found (looked in '${DIST:-unset}'). Reinstall the plugin." >&2

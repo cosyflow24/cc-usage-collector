@@ -3,24 +3,27 @@ description: Attribute the current Claude Code session to an existing Jira key (
 allowed-tools: Bash(bash:*)
 ---
 
-# /task
+# /cc-usage:task
 
 Record usage attribution only. This command must never read, create, edit,
 transition, comment on, or authenticate to Jira. It needs no Jira CLI, API token,
 MCP, or cached Jira identity.
 
-Accepted forms:
+The argument is exactly one of: `last`, `none`, a single Jira KEY, or `TASK EPIC`
+(two keys). **Validate it first, then run `set-task.sh` with only the validated
+value(s)** — never pass raw, unvalidated, or free-text input to the shell:
 
-- `last` — run `bash ~/.claude/cc-usage/bin/set-task.sh last`.
-- `none` — run `bash ~/.claude/cc-usage/bin/set-task.sh none`.
-- `KEY` — validate `^[A-Z][A-Z0-9]+-[0-9]+$`, then run
-  `bash ~/.claude/cc-usage/bin/set-task.sh KEY`.
-- `TASK EPIC` — validate both keys, then run
-  `bash ~/.claude/cc-usage/bin/set-task.sh TASK EPIC`.
+- `last` → run `bash ~/.claude/cc-usage/bin/set-task.sh last`
+- `none` → run `bash ~/.claude/cc-usage/bin/set-task.sh none`
+- a KEY matching `^[A-Z][A-Z0-9]+-[0-9]+$` → run `bash ~/.claude/cc-usage/bin/set-task.sh <KEY>`
+- two such KEYs `TASK EPIC` → run `bash ~/.claude/cc-usage/bin/set-task.sh <TASK> <EPIC>`
 
-Do not infer whether a key is a Task, Epic, Story, Bug, or sub-task. Do not
-invent, validate, or create a key. If the user describes new work instead of
-providing an existing key, explain that `/task` only records an existing key and
-ask them to create the Jira issue through the separate company Jira plugin.
+If the argument is anything else — free text, a description of new work, or shell
+metacharacters — do NOT run the command. Explain that `/cc-usage:task` only records
+an EXISTING key (`/cc-usage:task KI-123`, `/cc-usage:task last`, or
+`/cc-usage:task none`); creating a NEW issue is done through the separate company
+Jira plugin first, then `/cc-usage:task <the new KEY>`. Do not infer whether a key
+is a Task, Epic, Story, Bug, or sub-task, and do not invent, validate against Jira,
+or create a key.
 
-Confirm only what `set-task.sh` recorded, in the user's language.
+Confirm only what `set-task.sh` printed, in the user's language.

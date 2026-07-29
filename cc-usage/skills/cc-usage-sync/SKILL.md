@@ -4,7 +4,7 @@ description: Sync this machine's Claude Code AI spend to the team backend. Parse
   the last day's session logs (tokens per model + notional USD cost, project, git
   branch, Jira task/epic) and uploads them. Also drives per-session task
   attribution — at each session start it asks which Jira epic/task you're on — and
-  the /task command records it. Use when the user says "sync my CC usage", "upload
+  the /cc-usage:task command records it. Use when the user says "sync my CC usage", "upload
   usage", "record today's Claude Code spend", "attribute this session", or when
   a daily usage report is requested. Runs locally; metadata only.
 allowed-tools: [Bash, Read]
@@ -27,19 +27,19 @@ Only metadata is stored — never prompt or response text.
 
 1. **Per-session task prompt** (`scripts/ask-task.sh`, a `UserPromptSubmit`
    hook): until the session is attributed, it `decision:block`s **once** with a
-   FIXED English+German message asking you to run `/task`. Injected context
+   FIXED English+German message asking you to run `/cc-usage:task`. Injected context
    (SessionStart/additionalContext) is treated as background and was not acted on
    reliably, so we block instead. Scoped to `CC_USAGE_PROJECT` only; slash
    commands and empty prompts always pass; silent once recorded or skipped.
    It also does **drift detection**: if the git branch later points at a
-   different Jira key than the one recorded, it nudges you once to `/task` switch.
+   different Jira key than the one recorded, it nudges you once to `/cc-usage:task` switch.
    (`scripts/session-prompt.sh` is a `SessionStart` hook that only maps
-   cwd→sessionId so `/task` can find the live session.)
-2. **`/task` command** (`scripts/set-task.sh` + a usage-only command doc):
+   cwd→sessionId so `/cc-usage:task` can find the live session.)
+2. **`/cc-usage:task` command** (`scripts/set-task.sh` + a usage-only command doc):
    records the answer without connecting to Jira.
-   - `/task KI-758` — record a key (task or epic)
-   - `/task KI-758 KI-700` — task then epic
-   - `/task none` — mark this session not tracked
+   - `/cc-usage:task KI-758` — record a key (task or epic)
+   - `/cc-usage:task KI-758 KI-700` — task then epic
+   - `/cc-usage:task none` — mark this session not tracked
    Appends `{schemaVersion: 1, sessionId, jira, epic?, cwd, ts}` to
    `~/.claude/cc-usage/tasks.jsonl`.
    The collector validates only key syntax. It never reads, creates, edits, or
@@ -52,13 +52,13 @@ Only metadata is stored — never prompt or response text.
 Auto-capture (`scripts/capture-task.sh`) also best-effort resolves a key from
 `CC_JIRA` env → `<cwd>/.ccjira` file → git branch, as a fallback when you don't
 answer explicitly. There is no project→key fallback: attribution must be an
-explicit `/task` or a real branch/commit signal, so this scales company-wide.
+explicit `/cc-usage:task` or a real branch/commit signal, so this scales company-wide.
 
 ## Install
 
 ```bash
 ./install.sh        # from the repo root — prompts for ingest URL + token,
-                    # merges hooks, installs /task, runs a dry-run.
+                    # merges hooks, installs /cc-usage:task, runs a dry-run.
 ```
 
 Hooks-only re-install: `bash skill/cc-usage-sync/scripts/install-hooks.sh`.

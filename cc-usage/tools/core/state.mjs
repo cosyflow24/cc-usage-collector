@@ -9,7 +9,13 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { STATE_DIR, CLAUDE_JSON } from "./config.mjs";
 
-const KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
+// Pull the first Jira key out of any input (bare key, browse URL, or a sentence
+// containing one), so users can paste a link without hand-trimming it to the key.
+const KEY_EXTRACT = /[A-Z][A-Z0-9]+-\d+/;
+function extractKey(raw) {
+  const m = KEY_EXTRACT.exec((raw || "").toUpperCase());
+  return m ? m[0] : "";
+}
 
 export function ensureStateDir() {
   try { mkdirSync(STATE_DIR, { recursive: true }); } catch { /* ignore */ }
@@ -166,8 +172,14 @@ export function setTask(rawKey, rawEpic, cwd) {
     return "cc-usage: session marked not tracked (no Jira task).";
   }
 
-  if (!KEY_RE.test(key)) { const e = new Error(`not a Jira key: ${key}`); e.exitCode = 1; throw e; }
-  if (epic && !KEY_RE.test(epic)) { const e = new Error(`not a Jira key (epic): ${epic}`); e.exitCode = 1; throw e; }
+  const extractedKey = extractKey(key);
+  if (!extractedKey) { const e = new Error(`no Jira key found in: ${rawKey}`); e.exitCode = 1; throw e; }
+  key = extractedKey;
+  if (epic) {
+    const extractedEpic = extractKey(epic);
+    if (!extractedEpic) { const e = new Error(`no Jira key found in (epic): ${rawEpic}`); e.exitCode = 1; throw e; }
+    epic = extractedEpic;
+  }
 
   const row = {
     schemaVersion: 1, sessionId: sid, jira: key, cwd: regCwd,

@@ -98,6 +98,23 @@ export function declaredRow(sid) {
 }
 export function isDeclared(sid) { return declaredRow(sid) !== null; }
 
+// Sticky auto-bind candidate for a cwd: the most-recent key. Returns "" (→ ask
+// instead) when there is no history, when the newest key is older than ttlDays
+// (stale), or when the folder has churned through MORE THAN maxDistinct distinct
+// keys recently (high-cardinality → clearly not 1:1 with an issue). Note: a
+// folder with up to maxDistinct distinct keys still sticks to the newest — the
+// heuristic assumes the newest is the active one, and a branch-encoded task
+// switch is caught by drift detection; a switch on the same branch is only
+// caught by the 24h stale nudge.
+export function stickyKey(cwd, ttlDays = 14, maxDistinct = 3) {
+  const recent = recentForCwd(cwd, maxDistinct + 1);
+  if (!recent.length || recent.length > maxDistinct) return "";
+  const top = recent[0];
+  const ageDays = (Date.now() - new Date(top.ts || 0).getTime()) / 86400000;
+  if (!Number.isFinite(ageDays) || ageDays > ttlDays) return "";
+  return top.key;
+}
+
 // Recent distinct keys for a cwd (case-insensitive), newest first.
 export function recentForCwd(cwd, limit = 3) {
   const out = [];

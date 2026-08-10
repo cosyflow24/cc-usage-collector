@@ -21,7 +21,7 @@ import {
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 
-const VERSION = "0.4.1";
+const VERSION = "0.4.2";
 const out = (value = "") => process.stdout.write(`${value}\n`);
 const fail = (message, code = 1) => { const e = new Error(message); e.exitCode = code; throw e; };
 const need = (value, message) => value || fail(message);

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { STATE_DIR, readConfig } from "./config.mjs";
 import {
   mapCwd, appendRow, captureAccount, branchKey, declaredRow, isDeclared,
-  recentForCwd, writeMarker, hasMarker,
+  recentForCwd, stickyKey, writeMarker, hasMarker,
 } from "./state.mjs";
 import { selfHealLauncher } from "./launcher.mjs";
 
@@ -34,6 +34,16 @@ function isSymlink(p) {
   try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
 }
 
+// Headless / non-interactive runs (CI, `claude -p`, batch jobs) must never emit
+// an AskUserQuestion instruction or a blocking prompt — there is no human to
+// answer and a block can wedge the run. Such sessions still get silent
+// autoCapture + sticky binding, which is the correct behavior. Set
+// CC_USAGE_HEADLESS=1 to force this off explicitly.
+function nonInteractive() {
+  return !!(process.env.CI || process.env.CC_USAGE_HEADLESS
+    || process.env.CLAUDE_CODE_NONINTERACTIVE);
+}
+
 // ---- SessionStart: map cwd->sid, auto-capture, maintenance, task hint --------
 export function sessionStart(payload) {
   const sid = payload.session_id || payload.sessionId || "";
@@ -46,19 +56,40 @@ export function sessionStart(payload) {
 
   if (!sid || isDeclared(sid)) return null; // resumed/attributed → no nag
 
+  // Tier 1 — sticky: this folder was recently and unambiguously bound to one
+  // issue, so continue it silently. No prompt, no typing. Drift/stale nudges in
+  // promptSubmit still catch a task switch.
+  const sk = stickyKey(cwd);
+  if (sk) {
+    try {
+      appendRow({
+        schemaVersion: 1, sessionId: sid, jira: sk, cwd,
+        ts: new Date().toISOString(), src: "sticky",
+      });
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  // Nothing to auto-bind. In headless runs, stay silent (no human to answer).
+  if (nonInteractive()) return null;
+
+  // Tier 2 — clickable: ask the assistant to attribute via AskUserQuestion so
+  // the user picks a key instead of typing a command.
   const recent = recentForCwd(cwd).map((r) => r.key);
   const bk = branchKey(cwd);
-  const sugg = recent.slice();
-  if (bk && !recent.includes(bk)) sugg.push(`${bk} (branch)`);
-  const hint = sugg.length ? `Recent here: ${sugg.join(", ")}. ` : "";
-
-  const line = `[cc-usage] ${hint}`
-    + "Set the Jira task for this session:  /cc-usage:task last (reuse most recent)  |  "
-    + "/cc-usage:task <KEY> (existing issue)  |  /cc-usage:task none. "
-    + "New issue? Create it via the company Jira plugin first, then /cc-usage:task <the new KEY>.";
-  const additionalContext = "At the very START of your first reply, show the developer this line VERBATIM "
-    + "(do not translate it, never Chinese), then continue normally. Hint only, not a blocker:\n"
-    + line;
+  const keys = recent.slice();
+  if (bk && !keys.includes(bk)) keys.push(bk);
+  const optionsList = keys.length ? keys.join(", ") : "(none on record)";
+  const launcher = `sh ${JSON.stringify(join(toolDir, "cc-usage"))} task`;
+  const additionalContext = "[cc-usage] This Claude Code session is not yet attributed to a Jira "
+    + "issue. At the START of your first reply, call the AskUserQuestion tool (header \"cc-usage\") "
+    + "asking which Jira issue this session is for, in the user's language. Offer these options as "
+    + `clickable choices: the recent/branch keys [${optionsList}], plus "None — don't track". `
+    + "The built-in \"Other\" choice lets the user type a different key. When the user answers, record "
+    + `it by running exactly one Bash command: for a KEY matching ^[A-Z][A-Z0-9]+-[0-9]+$ run \`${launcher} <KEY>\`; `
+    + `for \"None\" run \`${launcher} none\`. Do not pass free text or a URL to the shell — extract the KEY first. `
+    + "This only records attribution metadata; it never touches Jira. If the user ignores the question, "
+    + "do not block their work — just continue.";
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } };
 }
 
@@ -125,7 +156,16 @@ export function promptSubmit(payload) {
     return null;
   }
 
-  // No task yet → ask once. Mark BEFORE blocking so we interrupt at most once.
+  // No task yet. SessionStart already offered a clickable AskUserQuestion; this
+  // block is only the deterministic backstop for when that was ignored. Headless
+  // runs never block. Give a short grace (a couple of prompts) before nagging,
+  // then interrupt at most once per session.
+  if (nonInteractive()) return null;
+  const GRACE = 2;
+  let seen = 0;
+  while (seen < GRACE && hasMarker(`pc${seen + 1}-${sid}`)) seen += 1;
+  if (seen < GRACE) { writeMarker(`pc${seen + 1}-${sid}`); return null; }
+  if (hasMarker(sid)) return null; // already nagged once
   writeMarker(sid);
   const recent = recentForCwd(cwd);
   const bk = branchKey(cwd);

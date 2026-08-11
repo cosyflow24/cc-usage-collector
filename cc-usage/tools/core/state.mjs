@@ -52,6 +52,18 @@ export function hasMarker(name) {
   try { return existsSync(join(askedDir(), name)); } catch { return false; }
 }
 
+// Atomically claim a marker: create it exclusively (O_EXCL) and return true only
+// for the caller that created it — false if it already exists OR the dir is
+// unwritable. Serializes once-per-day work across concurrent sessions where a
+// check-then-write would let two racers both proceed.
+export function claimMarker(name) {
+  try {
+    mkdirSync(askedDir(), { recursive: true });
+    writeFileSync(join(askedDir(), name), new Date().toISOString(), { flag: "wx" });
+    return true;
+  } catch { return false; }
+}
+
 // Resolve the session id $PWD-independently, exactly as set-task.sh did:
 // CLAUDE_CODE_SESSION_ID (authoritative) -> exact cwd -> case-insensitive cwd ->
 // the sole registered session.

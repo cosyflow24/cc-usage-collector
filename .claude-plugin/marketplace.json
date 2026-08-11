@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "cc-usage team analytics for Claude Code — one plugin, installed from this repo.",
-    "version": "0.4.2"
+    "version": "0.4.3"
   },
   "plugins": [
     {

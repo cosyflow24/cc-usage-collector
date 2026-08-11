@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn, execFileSync } from "node:child_process";
 import { STATE_DIR, readConfig } from "./config.mjs";
 import {
   mapCwd, appendRow, captureAccount, branchKey, declaredRow, isDeclared,
-  recentForCwd, stickyKey, writeMarker, hasMarker,
+  recentForCwd, stickyKey, writeMarker, hasMarker, claimMarker,
 } from "./state.mjs";
 import { selfHealLauncher } from "./launcher.mjs";
 
@@ -199,7 +200,49 @@ function maintenance() {
     pruneOldSymlinks(bin);
     rmSync(join(STATE_DIR, "plugin-dist.env"), { force: true });
     selfHealLauncher();
+    selfUpdate();
   } catch { /* never block a hook */ }
+}
+
+// Keep installed users on the latest release with zero manual steps: once per
+// day, in a detached background process, refresh the marketplace from its source
+// and update the plugin. `claude plugin update` installs the marketplace's
+// declared VERSION (not arbitrary commits), so publishing is still gated by a
+// version bump. Applies on the next Claude Code restart. Opt out with
+// CC_USAGE_NO_AUTOUPDATE=1. Never blocks or throws into the hook.
+const PLUGIN_ID = "cc-usage@cc-usage";
+const MARKETPLACE = "cc-usage";
+function findClaude() {
+  try {
+    return execFileSync("/bin/sh", ["-c", "command -v claude"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || "";
+  } catch { /* not on PATH */ }
+  for (const p of [
+    join(process.env.HOME || "", ".local/bin/claude"),
+    "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+  ]) { if (p && existsSync(p)) return p; }
+  return "";
+}
+function selfUpdate() {
+  if (process.env.CC_USAGE_NO_AUTOUPDATE) return;
+  // Atomic claim: only the racer that creates today's marker proceeds, so
+  // concurrent session starts can never spawn two updates at once. A failed
+  // claim (already done today, or unwritable state dir) simply skips.
+  const mark = `autoupdate-${new Date().toISOString().slice(0, 10)}`;
+  if (!claimMarker(mark)) return;
+  const claude = findClaude();
+  if (!claude) return;
+  const log = join(STATE_DIR, "autoupdate.log");
+  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  const cmd = `${q(claude)} plugin marketplace update ${MARKETPLACE} `
+    + `&& ${q(claude)} plugin update ${PLUGIN_ID}`;
+  try {
+    const child = spawn("/bin/sh", ["-c", `{ date; ${cmd}; } >> ${q(log)} 2>&1`], {
+      detached: true, stdio: "ignore",
+    });
+    child.unref();
+  } catch { /* best effort */ }
 }
 
 function regenCompatSync(bin) {

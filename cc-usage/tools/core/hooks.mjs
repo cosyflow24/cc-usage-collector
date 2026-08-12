@@ -1,7 +1,9 @@
-// The three Claude Code hook handlers, ported near-verbatim from the old
-// session-prompt.sh / capture-task.sh / ask-task.sh `node -e` bodies. The
-// user-facing text (EN+DE block, verbatim hint line, drift/stale nudges) is
-// transplanted unchanged — the collector and reviewers depend on it byte-for-byte.
+// The three Claude Code hook handlers. Since 2026-08-12 every interactive
+// nudge (first attribution, drift, stale, backstop) uses ONE interaction
+// contract: non-blocking additionalContext instructing the agent to call
+// AskUserQuestion with options that map to exactly one deterministic CLI
+// call. No blocking bilingual text prompts anymore; headless runs stay
+// silent; slash commands remain the manual fallback.
 //
 // Each handler returns the hook-output object to print (or null = pass-through).
 // Callers must always exit 0; diagnostics go to hook.err, never stdout.
@@ -126,16 +128,22 @@ export function promptSubmit(payload) {
 
   const declared = declaredRow(sid);
   if (declared) {
+    if (nonInteractive()) return null; // headless: never nudge
+    const launcher = `node ${JSON.stringify(resolverPath)} task`;
     const bk = branchKey(cwd);
     if (bk && bk !== declared.jira) {
       const mark = `drift-${sid}-${bk}`;
       if (!hasMarker(mark)) {
         writeMarker(mark);
-        const reason = `[cc-usage] Task drift? This session is recorded as ${declared.jira}, but the git branch points to ${bk}. `
-          + `Run  /cc-usage:task ${bk}  to switch, or ignore to keep ${declared.jira}.\n`
-          + `[DE] Task gewechselt? Diese Session ist als ${declared.jira} erfasst, der Branch zeigt aber auf ${bk}. `
-          + `Fuehre  /cc-usage:task ${bk}  zum Wechseln aus, oder ignoriere es.`;
-        return { decision: "block", reason };
+        // Same interaction contract as SessionStart: the agent asks via
+        // AskUserQuestion; each option maps to exactly one deterministic CLI
+        // call. Non-blocking — the user's actual prompt still goes through.
+        const additionalContext = `[cc-usage] Task drift: this session is recorded as ${declared.jira}, `
+          + `but the git branch points to ${bk}. At the START of your reply, call the AskUserQuestion tool `
+          + `(header "cc-usage") asking, in the user's language, whether to switch. Options: `
+          + `"Switch to ${bk}" (then run \`${launcher} ${bk}\`), "Keep ${declared.jira}" (run nothing), `
+          + `"Stop tracking" (run \`${launcher} none\`). Ask once for this branch; if ignored, continue without blocking.`;
+        return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } };
       }
       return null;
     }
@@ -145,13 +153,13 @@ export function promptSubmit(payload) {
       if (!hasMarker(mark)) {
         writeMarker(mark);
         const ageD = Math.round((ageH / 24) * 10) / 10;
-        const reason = `[cc-usage] Still working on ${declared.jira}? This session was bound to it ${ageD}d ago. `
-          + "Confirm with  /cc-usage:task last  (keep), switch with  /cc-usage:task <KEY>, or  /cc-usage:task none  to stop tracking. "
-          + "Asked at most once per day.\n"
-          + `[DE] Arbeitest du noch an ${declared.jira}? Diese Session wurde vor ${ageD} Tag(en) darauf gebucht. `
-          + "Bestaetige mit  /cc-usage:task last  (behalten), wechsle mit  /cc-usage:task <KEY>  oder  /cc-usage:task none. "
-          + "Hoechstens einmal pro Tag gefragt.";
-        return { decision: "block", reason };
+        const additionalContext = `[cc-usage] Stale attribution: this session was bound to ${declared.jira} `
+          + `${ageD} day(s) ago. At the START of your reply, call the AskUserQuestion tool (header "cc-usage") `
+          + `asking, in the user's language, whether that is still the right issue. Options: `
+          + `"Keep ${declared.jira}" (run nothing), "Switch issue" (let the built-in Other collect a KEY matching `
+          + `^[A-Z][A-Z0-9]+-[0-9]+$, then run \`${launcher} <KEY>\`), "Stop tracking" (run \`${launcher} none\`). `
+          + `Asked at most once per day; if ignored, continue without blocking.`;
+        return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } };
       }
     }
     return null;
@@ -172,21 +180,19 @@ export function promptSubmit(payload) {
   const bk = branchKey(cwd);
   const sugg = recent.map((r) => `${r.key} (${ago(r.ts)})`);
   if (bk && !recent.some((r) => r.key === bk)) sugg.push(`${bk} (branch)`);
-  const suggestLine = sugg.length
-    ? `\n[cc-usage] Recent in this folder: ${sugg.join(", ")}`
-      + " — reuse the most recent with  /cc-usage:task last  (or  /cc-usage:task <KEY>)."
-      + `\n[DE] Zuletzt in diesem Ordner: ${sugg.join(", ")}`
-      + " — den letzten uebernehmen mit  /cc-usage:task last  (oder  /cc-usage:task <KEY>)."
-    : "";
-  const reason = "[cc-usage] Which Jira issue is this session for? "
-    + "Run  /cc-usage:task <KEY>  (e.g. /cc-usage:task KI-758) for an existing issue, or  /cc-usage:task none  to skip. "
-    + "No existing key? Create the issue via the company Jira plugin first, then  /cc-usage:task <the new KEY>. "
-    + "You will only be asked once per session.\n"
-    + "[DE] Zu welchem Jira-Vorgang gehoert diese Session? "
-    + "Fuehre  /cc-usage:task <KEY>  aus (z. B. /cc-usage:task KI-758) fuer einen bestehenden Vorgang, oder  /cc-usage:task none. "
-    + "Noch kein Key? Lege den Vorgang zuerst ueber das Firmen-Jira-Plugin an, dann  /cc-usage:task <der neue KEY>."
-    + suggestLine;
-  return { decision: "block", reason };
+  const optionsList = sugg.length ? sugg.join(", ") : "(none on record)";
+  const launcher = `node ${JSON.stringify(resolverPath)} task`;
+  // Backstop mirrors the SessionStart interaction: clickable AskUserQuestion,
+  // deterministic CLI mapping, never a hard block of the user's prompt.
+  const additionalContext = "[cc-usage] This session is still not attributed to a Jira issue "
+    + "(the earlier question was not answered). At the START of your reply, call the AskUserQuestion "
+    + "tool (header \"cc-usage\") asking which Jira issue this session is for, in the user's language. "
+    + `Offer these clickable options: the recent/branch keys [${optionsList}], plus "None — don't track". `
+    + "The built-in \"Other\" choice lets the user type a different key. When the user answers, run exactly "
+    + `one Bash command: for a KEY matching ^[A-Z][A-Z0-9]+-[0-9]+$ run \`${launcher} <KEY>\`; for "None" run `
+    + `\`${launcher} none\`. Do not pass free text or a URL to the shell — extract the KEY first. `
+    + "This is asked at most once per session; if ignored, continue without blocking.";
+  return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } };
 }
 
 // ---- maintenance: replaces bootstrap.sh (keeps the 09:30 LaunchAgent alive) --

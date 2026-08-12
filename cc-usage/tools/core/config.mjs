@@ -22,6 +22,10 @@ export const STATE_DIR = join(
   process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"),
   "cc-usage",
 );
+// Stable resolver copy + the runtime registry it reads. Kept here so hooks,
+// doctor and the LaunchAgent compat shim all agree on one location.
+export const resolverPath = join(STATE_DIR, "resolver.mjs");
+export const registryFile = join(STATE_DIR, "runtime-registry.json");
 export const legacyEnvFile = join(STATE_DIR, "env");
 export const CLAUDE_JSON = process.env.CLAUDE_CONFIG_DIR
   ? join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")

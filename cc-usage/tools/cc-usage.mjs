@@ -22,6 +22,7 @@ import {
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
+import { verifyToken } from "./core/verify.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
 const VERSION = "0.5.0";
@@ -94,6 +95,18 @@ async function login(args) {
     token = (await hiddenQuestion("cc-usage upload token (input hidden): ")).trim();
   }
   if (!/^ccu_[A-Za-z0-9_-]+$/.test(token)) fail("that does not look like a cc-usage token (expected ccu_...)", 1);
+  // Live pre-check BEFORE storing (family pattern): a rejected token never
+  // lands in the keyring; an unreachable dashboard is tolerated (offline
+  // login) and re-checked by doctor later.
+  const check = await verifyToken(ingestUrl, token);
+  if (check.verdict === "rejected") {
+    fail(`the dashboard rejected this token — re-enroll at ${enrollUrl(ingestUrl)}`, 2);
+  }
+  if (check.verdict === "unreachable") {
+    process.stderr.write("WARNING: could not reach the dashboard to verify the token; storing anyway — run cc-usage doctor once online.\n");
+  } else if (check.enrolledEmails.length) {
+    out(`Token verified — uploads as: ${check.enrolledEmails.join(", ")}`);
+  }
   const email = cfg.email || readOauthEmail() || "default"; // stable, non-empty keyring account
   const where = storeToken(email, token);
   writeConfig({ ingestUrl, email, project: cfg.project });
@@ -155,7 +168,7 @@ function migrate() {
   out(token ? `cc-usage: credentials ready (ingest ${url}).` : "cc-usage: no token found. Run  cc-usage login.");
 }
 
-function doctor() {
+async function doctor() {
   let bad = 0;
   const ok = (m) => out(`ok: ${m}`);
   const nope = (m) => { out(`fail: ${m}`); bad += 1; };
@@ -171,8 +184,25 @@ function doctor() {
 
   const cfg = readConfig();
   ok(`ingest URL ${cfg.ingestUrl}`);
-  if (loadToken(cfg)) ok("upload token set (hidden)"); else nope("no upload token — run cc-usage login");
+  const token = loadToken(cfg);
+  if (token) ok("upload token set (hidden)"); else nope("no upload token — run cc-usage login");
   out(`     secret: ${secretDescription()}`);
+  if (token) {
+    // Live introspection (read-only whoami): rejected = real failure;
+    // unreachable = neutral (never a reason to drop the token).
+    const live = await verifyToken(cfg.ingestUrl, token);
+    if (live.verdict === "ok") {
+      ok(`live check: token accepted (uploads as: ${live.enrolledEmails.join(", ") || "?"})`);
+      const me = readOauthEmail();
+      if (me && live.enrolledEmails.length && !live.enrolledEmails.includes(me)) {
+        out(`     note: current Claude account ${me} is not among the token's accounts — an admin may need to link it.`);
+      }
+    } else if (live.verdict === "rejected") {
+      nope("live check: the dashboard rejected the token — re-enroll and run cc-usage login");
+    } else {
+      out("     live check: dashboard unreachable (offline?) — token kept, try again later.");
+    }
+  }
   if (existsSync(jsonConfigFile)) ok(`config ${jsonConfigFile}`); else out("     (no config.json yet)");
 
   try { mkdirSync(STATE_DIR, { recursive: true }); ok(`state dir ${STATE_DIR}`); } catch { nope(`state dir not writable: ${STATE_DIR}`); }

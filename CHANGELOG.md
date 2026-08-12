@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Auth hardening: `login` verifies the token live (read-only whoami) before
+  storing — rejected tokens never reach the keyring, offline is tolerated;
+  `doctor` gained the live check incl. enrolled-emails/oauth-coverage note;
+  `/cc-usage-login` no longer accepts tokens in chat (terminal hidden input
+  only, chat-pasted tokens are treated as burned); Windows tokens now use
+  user-scoped DPAPI (ported from data-catalog).
 - Unified interaction contract: drift, stale and the unattributed backstop now
   emit non-blocking AskUserQuestion instructions (clickable options mapping to
   exactly one deterministic `task` CLI call) instead of blocking bilingual text

@@ -1,27 +1,34 @@
 ---
-description: Save your cc-usage upload token (from the /enroll page) into the OS keyring so usage syncs to the team dashboard
+description: Enroll for cc-usage uploads — opens the enrollment page and directs you to the hidden-input terminal login (the token never touches the chat)
 allowed-tools: Bash(sh:*)
 ---
-Persist the cc-usage per-account upload token so the SessionEnd sync can upload.
-The token is stored in the OS keyring (macOS Keychain), never in a plaintext file.
+Wire up the cc-usage upload token so the SessionEnd sync can upload to the team
+dashboard. The token is per-account and uploads usage ONLY (never the dashboard
+password). It is stored in the OS keyring (macOS Keychain / Windows DPAPI;
+mode-600 file only where no keyring exists).
 
-Args: $ARGUMENTS  (the token from the /enroll page, e.g. `ccu_...`)
-
-The token is per-account and uploads usage ONLY (never the dashboard password).
-Get it from the enrollment page your admin gave you (`…/enroll` — enter your
-**Max** account email, the short `lastname@nnb24.de`), then run `/cc-usage:cc-usage-login <token>`.
+**Security contract (2026-08-12): the token must NEVER appear in this chat.**
+Chat history is stored and may be synced; a secret pasted here is burned. Do
+not ask for the token with AskUserQuestion either — that tool is for choices,
+not secrets.
 
 Steps:
-1. If `$ARGUMENTS` is empty, ask the user to paste their token from the /enroll
-   page and stop (do not store an empty token). You may also tell them they can
-   run `cc-usage login` in a terminal for a hidden-input prompt.
-2. Validate the token looks like an ingest token: it must match `^ccu_[A-Za-z0-9_-]+$`.
-   If not, tell the user it doesn't look like a cc-usage token and stop.
-3. Store it (the CLI reads the token from stdin so it never lands in a file):
+
+1. Open the enrollment flow and hand over to the terminal in ONE step — this
+   opens the browser page and prompts for the token with hidden input, then
+   verifies it live against the dashboard before storing:
    ```bash
-   printf '%s' '<TOKEN>' | sh "${CLAUDE_PLUGIN_ROOT}/tools/cc-usage" login --stdin
+   sh "${CLAUDE_PLUGIN_ROOT}/tools/cc-usage" login
    ```
-   Replace `<TOKEN>` with the validated `$ARGUMENTS`.
-4. Confirm what the CLI printed: token saved to the keyring; usage now uploads
-   automatically when a session ends. Offer a one-time immediate sync:
-   `sh "${CLAUDE_PLUGIN_ROOT}/tools/cc-usage" sync`.
+   Tell the user: enter the **Max** account email (the short
+   `lastname@nnb24.de`) on the page, copy the `ccu_…` token it shows, and paste
+   it into the terminal prompt (input is hidden).
+2. If the user pasted a token into the chat anyway ($ARGUMENTS non-empty):
+   do NOT store it. Tell them the token is now in chat history and must be
+   treated as burned — revoke/re-enroll on the dashboard and repeat step 1
+   with the fresh token in the terminal.
+3. Afterwards confirm with a health check (includes the live token check):
+   ```bash
+   sh "${CLAUDE_PLUGIN_ROOT}/tools/cc-usage" doctor
+   ```
+   Offer a one-time immediate sync: `sh "${CLAUDE_PLUGIN_ROOT}/tools/cc-usage" sync`.

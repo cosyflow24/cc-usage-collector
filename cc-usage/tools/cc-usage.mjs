@@ -2,12 +2,13 @@
 // Unified cc-usage CLI. One dependency-free ESM entry point over the collector
 // bundle + OS-keyring credentials + the Claude Code hooks. Mirrors nnb-jira's
 // tools/jira.mjs packaging (dispatch, options(), hiddenQuestion(), launcher).
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   STATE_DIR, DEFAULT_INGEST_URL, jsonConfigFile, readConfig, writeConfig, readOauthEmail,
+  resolverPath, registryFile,
 } from "./core/config.mjs";
 import {
   storeToken, loadToken, removeToken, secretDescription,
@@ -20,8 +21,10 @@ import {
   loadCredentials, runCollector, bundlePath,
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
+import { runUpdateWorker } from "./core/autoupdate.mjs";
+import { resolveRuntime } from "./resolver.mjs";
 
-const VERSION = "0.4.3";
+const VERSION = "0.5.0";
 const out = (value = "") => process.stdout.write(`${value}\n`);
 const fail = (message, code = 1) => { const e = new Error(message); e.exitCode = code; throw e; };
 const need = (value, message) => value || fail(message);
@@ -178,6 +181,12 @@ function doctor() {
   if (existsSync(launcher)) { if (ownsLauncher(launcher)) ok(`launcher ${launcher}`); else nope(`foreign launcher at ${launcher}`); }
   else out("     (launcher not installed — run cc-usage login or cc-usage refresh)");
 
+  if (existsSync(resolverPath)) ok(`resolver ${resolverPath}`);
+  else nope(`resolver copy missing (${resolverPath}) — start a Claude session to regenerate`);
+  const runtime = resolveRuntime();
+  if (runtime) ok(`runtime ${runtime.version} at ${runtime.root}`);
+  else nope("no valid plugin runtime registered — start a Claude session, or reinstall the plugin");
+
   const legacyEnv = join(STATE_DIR, "env");
   if (existsSync(legacyEnv) && /CC_USAGE_INGEST_TOKEN=\S/.test(readFileSync(legacyEnv, "utf8"))) {
     out("     note: plaintext token still in env — it migrates to the keyring on the next sync.");
@@ -185,9 +194,13 @@ function doctor() {
   const plist = join(homedir(), "Library", "LaunchAgents", "com.nnb24.cc-usage-sync.plist");
   if (existsSync(plist)) {
     const compat = join(STATE_DIR, "bin", "sync.sh");
-    out(existsSync(compat)
-      ? "     LaunchAgent present; bin/sync.sh compat shim in place."
-      : "     LaunchAgent present; open one Claude session so the compat bin/sync.sh regenerates.");
+    if (!existsSync(compat)) {
+      out("     LaunchAgent present; open one Claude session so the compat bin/sync.sh regenerates.");
+    } else if (readFileSync(compat, "utf8").includes(resolverPath)) {
+      out("     LaunchAgent present; bin/sync.sh points at the stable resolver.");
+    } else {
+      nope("bin/sync.sh still points at a versioned path — start a Claude session to heal it");
+    }
   }
 
   out(bad ? `cc-usage doctor: ${bad} issue(s)` : "cc-usage doctor: healthy");
@@ -197,14 +210,17 @@ function doctor() {
 function uninstall(args) {
   const { values } = options(args, { "--purge": "!purge", "--yes": "!yes" });
   const launcher = launcherPath();
-  if (existsSync(launcher) && ownsLauncher(launcher)) { spawnSync("rm", ["-f", launcher]); out(`Removed launcher: ${launcher}`); }
+  if (existsSync(launcher) && ownsLauncher(launcher)) { rmSync(launcher, { force: true }); out(`Removed launcher: ${launcher}`); }
   else if (existsSync(launcher)) out(`Kept unrecognized launcher: ${launcher}`);
   if (values.purge) {
     if (!values.yes) fail("re-run with --purge --yes to remove the stored token + config", 2);
     const cfg = readConfig();
     removeToken(cfg.email);
-    spawnSync("rm", ["-f", jsonConfigFile]);
-    out("Removed keyring token + config.json. Usage history (tasks.jsonl) was kept.");
+    rmSync(jsonConfigFile, { force: true });
+    rmSync(resolverPath, { force: true });
+    rmSync(registryFile, { force: true });
+    rmSync(join(STATE_DIR, "bin", "sync.sh"), { force: true });
+    out("Removed keyring token + config.json + resolver/registry/sync shim. Usage history (tasks.jsonl) was kept.");
   }
   out("Note: to also remove the daily job: launchctl bootout gui/$UID/com.nnb24.cc-usage-sync && rm ~/Library/LaunchAgents/com.nnb24.cc-usage-sync.plist");
 }
@@ -212,6 +228,7 @@ function uninstall(args) {
 function runHook(sub, payload) {
   if (sub === "session-start") { const o = sessionStart(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "prompt-submit") { const o = promptSubmit(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
+  if (sub === "autoupdate-worker") { runUpdateWorker(); return; }
   if (sub === "session-end") { runCollector(syncArgs("1", false), { quiet: true }); }
 }
 

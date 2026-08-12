@@ -16,15 +16,11 @@ test("the executable bundle has exactly one shebang", () => {
 });
 
 test("employee task bindings declare schema version 1", () => {
-  const capture = readFileSync(
-    new URL("../../../cc-usage/scripts/capture-task.sh", import.meta.url),
+  // The shell scripts were folded into the Node CLI (#2); the binding
+  // contract now lives in tools/core/state.mjs.
+  const state = readFileSync(
+    new URL("../../../cc-usage/tools/core/state.mjs", import.meta.url),
     "utf8",
   );
-  const explicit = readFileSync(
-    new URL("../../../cc-usage/scripts/set-task.sh", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(capture, /schemaVersion:\s*1,\s*sessionId:/);
-  assert.match(explicit, /schemaVersion:\s*1,\s*sessionId:/);
+  assert.match(state, /schemaVersion:\s*1,\s*sessionId:/);
 });

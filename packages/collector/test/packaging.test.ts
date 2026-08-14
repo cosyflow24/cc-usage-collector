@@ -9,6 +9,8 @@ test("the executable bundle has exactly one shebang", () => {
   assert.doesNotMatch(source, /^#!/);
   assert.equal(bundle.match(/^#!/gm)?.length, 1);
   assert.match(bundle, /^#!\/usr\/bin\/env node\n/);
+  assert.match(bundle, /codex-id-token/);
+  assert.match(bundle, /providerVerified/);
   const pluginPackage = JSON.parse(
     readFileSync(new URL("../../../cc-usage/package.json", import.meta.url), "utf8"),
   ) as { type?: string };

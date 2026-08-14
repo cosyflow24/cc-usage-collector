@@ -47,6 +47,35 @@ test("findSessions resolves one Jira task across Claude and Codex", async () => 
   }
 });
 
+test("later account metadata does not erase an earlier task binding", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cc-usage-context-task-"));
+  const claude = join(root, "claude");
+  const codex = join(root, "codex");
+  mkdirSync(claude, { recursive: true });
+  mkdirSync(codex, { recursive: true });
+  const sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  writeFileSync(join(claude, `${sessionId}.jsonl`), `${JSON.stringify({
+    type: "user",
+    sessionId,
+    cwd: "/work/app",
+    timestamp: "2026-08-14T09:00:00Z",
+    message: { content: "hello" },
+  })}\n`);
+  const tasksFile = join(root, "tasks.jsonl");
+  writeFileSync(tasksFile, [
+    JSON.stringify({ sessionId, jira: "BI-245", ts: "2026-08-14T09:01:00Z" }),
+    JSON.stringify({ sessionId, account: "dev@example.com", ts: "2026-08-14T09:02:00Z" }),
+  ].join("\n"));
+
+  const sessions = await findSessions(sessionId, {
+    claudeProjectsDir: claude,
+    codexSessionsDir: codex,
+    tasksFile,
+  });
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].jira, "BI-245");
+});
+
 test("renderContext returns local user/assistant context without system or tool payloads", async () => {
   const f = fixture();
   try {

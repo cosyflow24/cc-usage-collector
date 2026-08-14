@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { analyze } from "../src/analyze.ts";
 import { formatTable } from "../src/format.ts";
@@ -135,18 +136,37 @@ test("verified historical Codex identity remains valid after the account signs o
 
 test("sidecar identity source flows through loader into fail-closed analysis", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "cc-usage-sidecar-"));
-  const file = path.join(dir, "tasks.jsonl");
+  const claudeDir = path.join(dir, "claude");
+  const codexDir = path.join(dir, "codex");
+  const file = path.join(claudeDir, "cc-usage", "tasks.jsonl");
   try {
-    writeFileSync(file, [
-      JSON.stringify({
-        provider: "codex", sessionId: "old", account: "claude@nnb24.de",
-        ts: "2026-07-13T09:00:00Z", src: "hook-acct",
-      }),
-      JSON.stringify({
-        provider: "codex", sessionId: "verified", account: "codex@nnb24.de",
-        identitySource: "codex-id-token", ts: "2026-07-13T09:01:00Z", src: "hook-acct",
-      }),
-    ].join("\n"));
+    mkdirSync(path.join(claudeDir, "cc-usage"), { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(file, `${JSON.stringify({
+      provider: "codex", sessionId: "old", account: "claude@nnb24.de",
+      ts: "2026-07-13T09:00:00Z", src: "hook-acct",
+    })}\n`);
+    const jwt = `header.${Buffer.from(JSON.stringify({ email: "codex@nnb24.de" })).toString("base64url")}.sig`;
+    writeFileSync(
+      path.join(codexDir, "auth.json"),
+      JSON.stringify({ tokens: { id_token: jwt } }),
+    );
+    const hookModule = new URL("../../../cc-usage/tools/core/hooks.mjs", import.meta.url).href;
+    const captured = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      const { sessionStart } = await import(${JSON.stringify(hookModule)});
+      sessionStart({ session_id: "verified", cwd: "/work" });
+    `], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CI: "1",
+        CC_USAGE_NO_AUTOUPDATE: "1",
+        CLAUDE_CONFIG_DIR: claudeDir,
+        CODEX_HOME: codexDir,
+        CODEX_THREAD_ID: "verified",
+      },
+    });
+    assert.equal(captured.status, 0, captured.stderr);
     const sessionAccounts = loadSessionAccounts(file);
     const records: UsageRecord[] = [
       { ...rec("old", "2026-07-13T10:00:00"), provider: "codex", model: "gpt-5.6-sol" },

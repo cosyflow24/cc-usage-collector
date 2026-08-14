@@ -9,7 +9,7 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsup src/cli.ts --format esm --clean",
+    "build": "tsup src/cli.ts --format esm --clean && node ../../scripts/sync-plugin-dist.mjs",
     "test": "node --test --import tsx"
   },
   "dependencies": {

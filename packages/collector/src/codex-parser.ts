@@ -22,6 +22,20 @@ interface SessionMeta {
   cwd: string | null;
 }
 
+interface JsonRow {
+  ordinal: number;
+  value: Record<string, unknown>;
+}
+
+interface RolloutHeader {
+  file: string;
+  sessionId: string | null;
+  embeddedParentId: string | null;
+  hasExplicitHistoryBoundary: boolean;
+}
+
+const FILE_CONCURRENCY = 16;
+
 export function codexSessionsDir(): string {
   const base = process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
   return path.join(base, "sessions");
@@ -116,6 +130,105 @@ function parseMeta(payload: unknown): SessionMeta | null {
   };
 }
 
+async function* readJsonRows(file: string): AsyncGenerator<JsonRow> {
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let ordinal = 0;
+  try {
+    for await (const line of lines) {
+      ordinal += 1;
+      if (!line || line.length > MAX_LINE_LEN) continue;
+      try {
+        const value = JSON.parse(line) as unknown;
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          yield { ordinal, value: value as Record<string, unknown> };
+        }
+      } catch {
+        // A truncated row must not make the rest of a rollout unreadable.
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+async function mapConcurrent<T, R>(
+  values: T[],
+  limit: number,
+  visit: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const output = new Array<R>(values.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await visit(values[index]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, () => worker()),
+  );
+  return output;
+}
+
+async function readRolloutHeader(file: string): Promise<RolloutHeader> {
+  const rows = readJsonRows(file);
+  const first = await rows.next();
+  const second = await rows.next();
+  await rows.return(undefined);
+
+  const firstValue = first.done ? null : first.value.value;
+  const secondValue = second.done ? null : second.value.value;
+  const firstPayload =
+    firstValue?.type === "session_meta" && firstValue.payload && typeof firstValue.payload === "object"
+      ? firstValue.payload as Record<string, unknown>
+      : null;
+  const ownMeta = firstPayload ? parseMeta(firstPayload) : null;
+  const embeddedMeta = secondValue?.type === "session_meta"
+    ? parseMeta(secondValue.payload)
+    : null;
+
+  return {
+    file,
+    sessionId: ownMeta?.sessionId ?? null,
+    embeddedParentId: embeddedMeta?.sessionId ?? null,
+    hasExplicitHistoryBoundary:
+      firstPayload !== null && "subagent_history_start_ordinal" in firstPayload,
+  };
+}
+
+function historySignature(row: Record<string, unknown>): string {
+  // Old Codex subagent rollouts copy the parent's payloads with rewritten
+  // timestamps. Compare only the semantic row so that copied history can be
+  // identified without reading or retaining prompt text outside this process.
+  return JSON.stringify({ type: row.type, payload: row.payload });
+}
+
+async function embeddedHistoryEndOrdinal(childFile: string, parentFile: string): Promise<number> {
+  const childRows = readJsonRows(childFile);
+  const parentRows = readJsonRows(parentFile);
+  try {
+    // Child: own session_meta, embedded parent session_meta, copied parent rows.
+    // Parent: own session_meta, then the source rows copied into the child.
+    await childRows.next();
+    await childRows.next();
+    await parentRows.next();
+
+    let lastMatchedChildOrdinal = 0;
+    while (true) {
+      const [child, parent] = await Promise.all([childRows.next(), parentRows.next()]);
+      if (child.done || parent.done) break;
+      if (historySignature(child.value.value) !== historySignature(parent.value.value)) break;
+      lastMatchedChildOrdinal = child.value.ordinal;
+    }
+    return lastMatchedChildOrdinal;
+  } finally {
+    await Promise.all([childRows.return(undefined), parentRows.return(undefined)]);
+  }
+}
+
 function makeRecord(
   meta: SessionMeta,
   timestamp: Date,
@@ -141,24 +254,18 @@ function makeRecord(
   };
 }
 
-async function parseFile(file: string, since: Date, until: Date): Promise<UsageRecord[]> {
+async function parseFile(
+  file: string,
+  since: Date,
+  until: Date,
+  skipThroughOrdinal = 0,
+): Promise<UsageRecord[]> {
   const records: UsageRecord[] = [];
-  const input = createReadStream(file, { encoding: "utf8" });
-  const lines = createInterface({ input, crlfDelay: Infinity });
   let meta: SessionMeta | null = null;
   let model: string | null = null;
   let cwd: string | null = null;
   let previous: NormalizedSnapshot | null = null;
-  let ordinal = 0;
-  for await (const line of lines) {
-    ordinal += 1;
-    if (!line || line.length > MAX_LINE_LEN) continue;
-    let row: Record<string, unknown>;
-    try {
-      row = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+  for await (const { ordinal, value: row } of readJsonRows(file)) {
     if (row.type === "session_meta") {
       // A subagent rollout starts with its own metadata, then embeds one or more
       // parent-history session_meta rows. The filename and all following live
@@ -179,7 +286,7 @@ async function parseFile(file: string, since: Date, until: Date): Promise<UsageR
     const inRange = timestamp >= since && timestamp <= until;
     if (row.type === "response_item") {
       const kind = responseKind(row.payload);
-      if (kind && inRange) {
+      if (kind && inRange && ordinal > skipThroughOrdinal) {
         records.push(makeRecord(meta, timestamp, model, cwd, kind, {
           inputTokens: 0,
           outputTokens: 0,
@@ -201,7 +308,11 @@ async function parseFile(file: string, since: Date, until: Date): Promise<UsageR
     // of dropping it (and every later snapshot below the old high-water mark).
     const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
     previous = snapshot;
-    if (!inRange || Object.values(delta).every((v) => v === 0)) continue;
+    if (
+      ordinal <= skipThroughOrdinal ||
+      !inRange ||
+      Object.values(delta).every((v) => v === 0)
+    ) continue;
     records.push(makeRecord(
       meta,
       timestamp,
@@ -221,6 +332,19 @@ export async function readCodexRecords(
   dir = codexSessionsDir(),
 ): Promise<UsageRecord[]> {
   const files = await listLogFiles(dir);
-  const nested = await Promise.all(files.map((file) => parseFile(file, since, until)));
+  const headers = await mapConcurrent(files, FILE_CONCURRENCY, readRolloutHeader);
+  const bySessionId = new Map(
+    headers.flatMap((header) => header.sessionId ? [[header.sessionId, header.file] as const] : []),
+  );
+  const historyEnds = new Map<string, number>();
+  await mapConcurrent(headers, FILE_CONCURRENCY, async (header) => {
+    if (header.hasExplicitHistoryBoundary || !header.embeddedParentId) return;
+    const parentFile = bySessionId.get(header.embeddedParentId);
+    if (!parentFile || parentFile === header.file) return;
+    const historyEnd = await embeddedHistoryEndOrdinal(header.file, parentFile);
+    if (historyEnd > 0) historyEnds.set(header.file, historyEnd);
+  });
+  const nested = await mapConcurrent(files, FILE_CONCURRENCY, (file) =>
+    parseFile(file, since, until, historyEnds.get(file) ?? 0));
   return nested.flat();
 }

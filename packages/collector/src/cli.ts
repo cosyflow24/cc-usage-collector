@@ -2,9 +2,9 @@ import { Command } from "commander";
 import { analyze } from "./analyze.ts";
 import { fetchCcusageCost, fetchCcusageDailyTotal } from "./ccusage.ts";
 import {
-  isWorkAccount,
   loadJiraConfig,
   resolveAccountEmail,
+  resolveCodexAccountEmail,
   resolveRange,
   resolveUser,
 } from "./config.ts";
@@ -52,6 +52,10 @@ program
 
     const result = analyze(records, {
       user,
+      providerUsers: opts.user ? { claude: user, codex: user } : {
+        claude: resolveAccountEmail() ?? user,
+        codex: resolveCodexAccountEmail() ?? user,
+      },
       since,
       until,
       idleGapMs,
@@ -84,19 +88,6 @@ program
     }
 
     if (opts.upload) {
-      // POLICY: only report when signed into a work account. A developer on a
-      // personal Claude account is never uploaded.
-      const account = resolveAccountEmail();
-      if (!isWorkAccount(account)) {
-        const who = account ?? "no account found";
-        const domain = process.env.CC_USAGE_WORK_DOMAIN ?? "nnb24.de";
-        process.stderr.write(
-          `Skipping upload: '${who}' is not a @${domain} work account. ` +
-            "Sign into your work account in Claude Code to report usage.\n",
-        );
-        return;
-      }
-
       // Upload ALL sessions (KI-764 three-state): untagged work lands under
       // "Unassigned" instead of being dropped, so the dashboard shows full
       // per-project usage. A jira key is backfilled later via /task or reclaim.

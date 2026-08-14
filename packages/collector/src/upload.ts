@@ -31,11 +31,11 @@ function wireTotals(t: TokenTotals): TokenTotals {
   };
 }
 
-function wireModelUsage(m: ModelUsage): ModelUsage {
+function wireModelUsage(m: ModelUsage) {
   return { model: m.model, ...wireTotals(m), costUsd: m.costUsd };
 }
 
-function wireSession(s: SessionSummary): SessionSummary {
+function wireSession(s: SessionSummary) {
   return {
     provider: s.provider,
     sessionId: s.sessionId,
@@ -58,7 +58,7 @@ function wireSession(s: SessionSummary): SessionSummary {
   };
 }
 
-function wireDaily(d: DailySummary): DailySummary {
+function wireDaily(d: DailySummary) {
   return {
     day: d.day,
     user: d.user,

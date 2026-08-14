@@ -139,7 +139,9 @@ export function promptSubmit(payload) {
   if (sid) mapCwd(cwd, sid, provider);
   if (!prompt || prompt.startsWith("/")) return null; // slash + empty pass
   if (!sid) return null;
-  if (hasMarker(`${provider}-${sid}`)) return null; // task none → quiet
+  if (hasMarker(`${provider}-${sid}`) || (provider === "claude" && hasMarker(sid))) {
+    return null; // task none → quiet; bare marker is the pre-provider Claude format
+  }
 
   const declared = declaredRow(sid, provider);
   if (declared) {
@@ -189,7 +191,7 @@ export function promptSubmit(payload) {
   let seen = 0;
   while (seen < GRACE && hasMarker(`pc${seen + 1}-${sid}`)) seen += 1;
   if (seen < GRACE) { writeMarker(`pc${seen + 1}-${sid}`); return null; }
-  if (hasMarker(`${provider}-${sid}`)) return null; // already nagged once
+  if (hasMarker(`${provider}-${sid}`) || (provider === "claude" && hasMarker(sid))) return null;
   writeMarker(`${provider}-${sid}`);
   const recent = recentForCwd(cwd);
   const bk = branchKey(cwd);

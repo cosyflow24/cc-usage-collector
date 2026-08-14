@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { STATE_DIR, CLAUDE_JSON } from "./config.mjs";
+import { STATE_DIR, readProviderEmail } from "./config.mjs";
 
 // Pull the first Jira key out of any input (bare key, browse URL, or a sentence
 // containing one), so users can paste a link without hand-trimming it to the key.
@@ -166,17 +166,15 @@ export function recentForCwd(cwd, limit = 3) {
   return out;
 }
 
-// Per-session account/plan capture from ~/.claude.json — so each session is
-// credited to the plan actually in use then. Appends a `hook-acct` row.
+// Per-session account capture from the matching provider's authenticated
+// identity. Never attribute a Codex session to the unrelated Claude login.
 export function captureAccount(sid, cwd, provider = "claude") {
   if (!sid) return;
   try {
-    const oa = JSON.parse(readFileSync(CLAUDE_JSON, "utf8")).oauthAccount || {};
-    const account = String(oa.emailAddress || "").toLowerCase();
-    const plan = String(oa.organizationType || "");
+    const account = readProviderEmail(provider);
     if (account.includes("@")) {
       appendRow({
-        schemaVersion: 1, provider, sessionId: sid, account, plan, cwd,
+        schemaVersion: 1, provider, sessionId: sid, account, cwd,
         ts: new Date().toISOString(), src: "hook-acct",
       });
     }

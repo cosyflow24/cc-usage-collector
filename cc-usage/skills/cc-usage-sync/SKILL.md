@@ -24,8 +24,8 @@ from `${CLAUDE_PLUGIN_ROOT}/tools/cc-usage` or, after `cc-usage login`, as
 
 Reads `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions/**/*.jsonl`, groups by provider + session,
 computes per-model
-token totals + a **notional** USD cost (public API rates via ccusage — you are
-on an enterprise seat and never billed per token), derives the project (from
+token totals + a **notional** USD cost where an authoritative public rate exists
+(Claude via ccusage; Codex subscription pricing is shown as unavailable), derives the project (from
 cwd) and a Jira task/epic, then upserts into `cc_sessions` and `cc_daily`.
 Only metadata is stored — never prompt or response text.
 
@@ -50,8 +50,8 @@ Only metadata is stored — never prompt or response text.
    The collector validates only key syntax. It never reads, creates, edits, or
    authenticates to Jira. If an epic is already known, pass it explicitly as the
    second key; backend enrichment can add metadata later.
-3. **SessionEnd sync** (`cc-usage hook session-end` → `cc-usage sync`): starts
-   `cc-usage --days 1 --upload` in the hook host's background mode (scoped via
+3. **SessionEnd sync** (`cc-usage hook session-end` → detached collector): starts
+   `cc-usage --days 1 --upload` as a fully detached worker (scoped via
    `--project` when configured), so Codex can honor its three-second SessionEnd
    cap while the scan/upload finishes. Idempotent on
    `(user_id, provider, session_id)` / `(user_id, day)`.

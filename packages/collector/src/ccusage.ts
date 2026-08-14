@@ -101,7 +101,13 @@ export async function fetchCcusageCost(
         : [];
       const models: ModelUsage[] = breakdowns
         .filter((b) => typeof b.modelName === "string")
-        .map((b) => ({ model: b.modelName as string, ...toTotals(b), costUsd: num(b.cost) }));
+        .map((b) => ({
+          provider: "claude" as const,
+          model: b.modelName as string,
+          ...toTotals(b),
+          costUsd: num(b.cost),
+          costAvailable: true,
+        }));
       map.set(s.period, {
         totalCostUsd: num(s.totalCost),
         totals: toTotals(s),

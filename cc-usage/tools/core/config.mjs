@@ -30,6 +30,10 @@ export const legacyEnvFile = join(STATE_DIR, "env");
 export const CLAUDE_JSON = process.env.CLAUDE_CONFIG_DIR
   ? join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")
   : join(homedir(), ".claude.json");
+export const CODEX_AUTH_JSON = join(
+  process.env.CODEX_HOME || join(homedir(), ".codex"),
+  "auth.json",
+);
 
 export function readConfig() {
   let stored = {};
@@ -101,6 +105,21 @@ export function readOauthEmail() {
     const data = JSON.parse(readFileSync(CLAUDE_JSON, "utf8"));
     return String(data?.oauthAccount?.emailAddress || "").toLowerCase();
   } catch { return ""; }
+}
+
+export function readCodexOauthEmail() {
+  try {
+    const data = JSON.parse(readFileSync(CODEX_AUTH_JSON, "utf8"));
+    const token = data?.tokens?.id_token;
+    if (typeof token !== "string") return "";
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] || "", "base64url").toString("utf8"));
+    const email = String(payload?.email || "").toLowerCase();
+    return email.includes("@") ? email : "";
+  } catch { return ""; }
+}
+
+export function readProviderEmail(provider) {
+  return provider === "codex" ? readCodexOauthEmail() : readOauthEmail();
 }
 
 export function ensureParent(path) {

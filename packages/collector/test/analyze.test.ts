@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { analyze } from "../src/analyze.ts";
+import { formatTable } from "../src/format.ts";
 import type { UsageRecord } from "../src/types.ts";
 
 // Timestamps deliberately have NO timezone suffix → parsed as LOCAL time, so
@@ -54,6 +55,35 @@ test("provider is part of session identity and daily usage stays unified", () =>
   assert.equal(result.daily.length, 1);
   assert.equal(result.daily[0]!.sessions, 2);
   assert.equal(result.daily[0]!.totals.totalTokens, 42);
+  assert.equal(result.daily[0]!.hasUnpricedCodex, true);
+  assert.equal(result.hasUnpricedCodex, true);
+  assert.equal(result.modelUsage.find((m) => m.provider === "codex")?.costAvailable, false);
+  assert.match(formatTable(result), /Claude-only|—/);
+  assert.doesNotMatch(formatTable(result), /gpt-5\.6-sol\s+\$0\.00/);
+});
+
+test("provider-specific account fallback does not assign Codex to Claude", () => {
+  const claude = rec("claude-id", "2026-07-13T10:00:00");
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([claude, codex], {
+    user: "fallback@nnb24.de",
+    providerUsers: {
+      claude: "claude@nnb24.de",
+      codex: "codex@personal.dev",
+    },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+  });
+  assert.deepEqual(
+    result.sessions.map((session) => `${session.provider}:${session.user}`).sort(),
+    ["claude:claude@nnb24.de", "codex:codex@personal.dev"],
+  );
 });
 
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {

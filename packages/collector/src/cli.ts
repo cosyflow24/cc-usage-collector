@@ -54,7 +54,9 @@ program
       user,
       providerUsers: opts.user ? { claude: user, codex: user } : {
         claude: resolveAccountEmail() ?? user,
-        codex: resolveCodexAccountEmail() ?? user,
+        // Fail closed: an unreadable/missing Codex identity must never borrow
+        // the Claude work email and thereby pass the upload work-domain gate.
+        codex: resolveCodexAccountEmail(),
       },
       since,
       until,

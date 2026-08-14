@@ -15,7 +15,7 @@ import type {
 export interface AnalyzeOptions {
   user: string;
   /** Provider-specific authenticated identities; prevents cross-provider attribution. */
-  providerUsers?: Partial<Record<"claude" | "codex", string>>;
+  providerUsers?: Partial<Record<"claude" | "codex", string | null>>;
   since: Date;
   until: Date;
   /** Gaps longer than this (ms) are treated as idle and trimmed from activeMs. */
@@ -146,6 +146,18 @@ function buildSession(
   const start = recs[0]!.timestamp;
   const provider = recs[0]!.provider;
   const composite = sessionTaskKey(provider, sessionId);
+  const scopedAccount = opts.sessionAccounts?.get(composite);
+  // Pre-provider sidecars contain bare ids and were written by Claude hooks.
+  // Never let one of those entries attribute a Codex rollout to a Claude user.
+  const legacyClaudeAccount = provider === "claude"
+    ? opts.sessionAccounts?.get(sessionId)
+    : undefined;
+  const hasProviderIdentity = opts.providerUsers
+    ? Object.prototype.hasOwnProperty.call(opts.providerUsers, provider)
+    : false;
+  const providerUser = hasProviderIdentity
+    ? opts.providerUsers?.[provider]
+    : opts.user;
   // `end` is used ONLY for the in-window git-commit Jira scan below — never
   // uploaded. The exact span never leaves the machine.
   const end = recs[recs.length - 1]!.timestamp;
@@ -163,7 +175,8 @@ function buildSession(
   const project = cwd ? path.basename(cwd) : null;
 
   // Explicit declaration (sidecar) wins over any heuristic.
-  const declared = opts.sessionTasks?.get(composite) ?? opts.sessionTasks?.get(sessionId);
+  const declared = opts.sessionTasks?.get(composite)
+    ?? (provider === "claude" ? opts.sessionTasks?.get(sessionId) : undefined);
   const jiraKey =
     declared?.jira ??
     resolveJiraKey({ branch, cwd, project }, start, end, opts.jira ?? defaultJiraConfig);
@@ -210,9 +223,10 @@ function buildSession(
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account
-      ?? opts.providerUsers?.[provider]
-      ?? opts.user,
+    user: scopedAccount?.account
+      ?? legacyClaudeAccount?.account
+      ?? providerUser
+      ?? `unknown-${provider}-account`,
     project,
     gitBranch: branch,
     jiraKey,

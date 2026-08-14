@@ -142,6 +142,30 @@ test("readCodexRecords: treats a decreasing snapshot as a new cumulative segment
   );
 });
 
+test("readCodexRecords: cache mix changes never look like a cumulative reset", async () => {
+  const dir = writeRollout([
+    row("2026-08-14T10:00:00Z", "session_meta", { id: "s-cache", cwd: "/work/app" }),
+    row("2026-08-14T10:00:01Z", "turn_context", { model: "gpt-5.6-sol" }),
+    row("2026-08-14T10:00:02Z", "event_msg", {
+      type: "token_count",
+      info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10 } },
+    }),
+    row("2026-08-14T10:00:03Z", "event_msg", {
+      type: "token_count",
+      info: { total_token_usage: { input_tokens: 150, cached_input_tokens: 100, output_tokens: 20 } },
+    }),
+  ]);
+  const records = await readCodexRecords(SINCE, UNTIL, dir);
+  assert.equal(
+    records.reduce(
+      (sum, record) => sum + record.inputTokens + record.cacheReadTokens
+        + record.cacheCreationTokens + record.outputTokens,
+      0,
+    ),
+    170,
+  );
+});
+
 test("readCodexRecords: embedded parent metadata never replaces the rollout identity", async () => {
   const dir = writeRollout([
     row("2026-08-14T10:00:00Z", "session_meta", {

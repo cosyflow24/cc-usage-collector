@@ -37,7 +37,10 @@ function taskRows(file) {
     if (!line.trim()) continue;
     try {
       const row = JSON.parse(line);
-      if (!row?.sessionId) continue;
+      // Account-capture and hook bookkeeping rows share this append-only file.
+      // They must not erase an earlier task declaration merely because their
+      // timestamp is newer.
+      if (!row?.sessionId || typeof row.jira !== "string" || !row.jira) continue;
       const provider = row.provider === "codex" ? "codex" : "claude";
       const key = `${provider}:${row.sessionId}`;
       if (!latest.has(key) || String(row.ts || "") >= String(latest.get(key).ts || "")) {

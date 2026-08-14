@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { analyze } from "../src/analyze.ts";
 import { formatTable } from "../src/format.ts";
+import { loadSessionAccounts } from "../src/sidecar.ts";
 import type { UsageRecord } from "../src/types.ts";
 
 // Timestamps deliberately have NO timezone suffix → parsed as LOCAL time, so
@@ -127,6 +131,43 @@ test("verified historical Codex identity remains valid after the account signs o
     ]]),
   });
   assert.equal(result.sessions[0]?.user, "codex@nnb24.de");
+});
+
+test("sidecar identity source flows through loader into fail-closed analysis", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cc-usage-sidecar-"));
+  const file = path.join(dir, "tasks.jsonl");
+  try {
+    writeFileSync(file, [
+      JSON.stringify({
+        provider: "codex", sessionId: "old", account: "claude@nnb24.de",
+        ts: "2026-07-13T09:00:00Z", src: "hook-acct",
+      }),
+      JSON.stringify({
+        provider: "codex", sessionId: "verified", account: "codex@nnb24.de",
+        identitySource: "codex-id-token", ts: "2026-07-13T09:01:00Z", src: "hook-acct",
+      }),
+    ].join("\n"));
+    const sessionAccounts = loadSessionAccounts(file);
+    const records: UsageRecord[] = [
+      { ...rec("old", "2026-07-13T10:00:00"), provider: "codex", model: "gpt-5.6-sol" },
+      { ...rec("verified", "2026-07-13T10:01:00"), provider: "codex", model: "gpt-5.6-sol" },
+    ];
+    const result = analyze(records, {
+      user: "claude@nnb24.de",
+      providerUsers: { claude: "claude@nnb24.de", codex: null },
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+      sessionAccounts,
+    });
+    assert.deepEqual(
+      result.sessions.map((session) => `${session.sessionId}:${session.user}`).sort(),
+      ["old:unknown-codex-account", "verified:codex@nnb24.de"],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {

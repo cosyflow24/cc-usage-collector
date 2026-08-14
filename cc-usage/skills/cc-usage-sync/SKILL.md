@@ -50,9 +50,11 @@ Only metadata is stored — never prompt or response text.
    The collector validates only key syntax. It never reads, creates, edits, or
    authenticates to Jira. If an epic is already known, pass it explicitly as the
    second key; backend enrichment can add metadata later.
-3. **SessionEnd sync** (`cc-usage hook session-end` → `cc-usage sync`): runs
-   `cc-usage --days 1 --upload` (scoped via `--project` when configured) when a
-   session ends. Idempotent on `(user_id, provider, session_id)` / `(user_id, day)`.
+3. **SessionEnd sync** (`cc-usage hook session-end` → `cc-usage sync`): starts
+   `cc-usage --days 1 --upload` in the hook host's background mode (scoped via
+   `--project` when configured), so Codex can honor its three-second SessionEnd
+   cap while the scan/upload finishes. Idempotent on
+   `(user_id, provider, session_id)` / `(user_id, day)`.
 
 Auto-capture (part of `hook session-start`) also best-effort resolves a key from
 `CC_JIRA` env → `<cwd>/.ccjira` file → git branch, as a fallback when you don't

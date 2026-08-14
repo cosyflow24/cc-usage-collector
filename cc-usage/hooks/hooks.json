@@ -17,7 +17,7 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/tools/cc-usage.mjs\" hook session-end", "timeout": 120 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/tools/cc-usage.mjs\" hook session-end", "timeout": 3, "async": true }
         ]
       }
     ]

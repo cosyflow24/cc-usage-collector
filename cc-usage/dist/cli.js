@@ -3649,7 +3649,7 @@ async function parseFile(file, since, until) {
       continue;
     }
     if (row.type === "session_meta") {
-      meta = parseMeta(row.payload) ?? meta;
+      if (!meta) meta = parseMeta(row.payload);
       continue;
     }
     if (!meta) continue;
@@ -3681,8 +3681,7 @@ async function parseFile(file, since, until) {
       payload.info.total_token_usage
     );
     if (!snapshot) continue;
-    const delta = deltaSnapshot(snapshot, previous);
-    if (!delta) continue;
+    const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
     previous = snapshot;
     if (!inRange || Object.values(delta).every((v) => v === 0)) continue;
     records.push(makeRecord(

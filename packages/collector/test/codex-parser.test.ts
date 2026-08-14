@@ -100,7 +100,7 @@ test("readCodexRecords: converts cumulative snapshots to non-overlapping token d
   );
 });
 
-test("readCodexRecords: ignores malformed/decreasing snapshots instead of subtracting usage", async () => {
+test("readCodexRecords: treats a decreasing snapshot as a new cumulative segment", async () => {
   const dir = writeRollout([
     row("2026-08-14T10:00:00Z", "session_meta", { id: "s1", cwd: "/work/app" }),
     row("2026-08-14T10:00:01Z", "turn_context", { model: "gpt-5.6-sol" }),
@@ -118,13 +118,57 @@ test("readCodexRecords: ignores malformed/decreasing snapshots instead of subtra
     }),
   ]);
   const records = await readCodexRecords(SINCE, UNTIL, dir);
+  assert.equal(records.length, 2);
+  assert.deepEqual(
+    {
+      input: records.reduce((sum, record) => sum + record.inputTokens, 0),
+      cache: records.reduce((sum, record) => sum + record.cacheReadTokens, 0),
+      output: records.reduce((sum, record) => sum + record.outputTokens, 0),
+    },
+    { input: 23, cache: 7, output: 5 },
+  );
+});
+
+test("readCodexRecords: embedded parent metadata never replaces the rollout identity", async () => {
+  const dir = writeRollout([
+    row("2026-08-14T10:00:00Z", "session_meta", {
+      id: "codex-child",
+      session_id: "codex-root",
+      parent_thread_id: "codex-parent",
+      cwd: "/work/child",
+      agent_role: "worker",
+    }),
+    row("2026-08-14T10:00:00Z", "session_meta", {
+      id: "codex-parent",
+      session_id: "codex-parent",
+      cwd: "/work/parent",
+    }),
+    row("2026-08-14T10:00:01Z", "turn_context", {
+      model: "gpt-5.6-sol",
+      cwd: "/work/child",
+    }),
+    row("2026-08-14T10:00:02Z", "event_msg", {
+      type: "token_count",
+      info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 1 } },
+    }),
+  ]);
+
+  const records = await readCodexRecords(SINCE, UNTIL, dir);
   assert.equal(records.length, 1);
   assert.deepEqual(
-    records[0] && {
-      input: records[0].inputTokens,
-      cache: records[0].cacheReadTokens,
-      output: records[0].outputTokens,
-    },
-    { input: 15, cache: 5, output: 4 },
+    records.map((record) => ({
+      session: record.sessionId,
+      parent: record.parentSessionId,
+      root: record.rootSessionId,
+      role: record.agentRole,
+      cwd: record.cwd,
+    })),
+    [{
+      session: "codex-child",
+      parent: "codex-parent",
+      root: "codex-root",
+      role: "worker",
+      cwd: "/work/child",
+    }],
   );
 });

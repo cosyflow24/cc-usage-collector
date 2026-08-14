@@ -24,3 +24,14 @@ test("employee task bindings declare schema version 1", () => {
   );
   assert.match(state, /schemaVersion:\s*1,\s*sessionId:/);
 });
+
+test("SessionEnd sync runs asynchronously within the Codex three-second cap", () => {
+  const config = JSON.parse(
+    readFileSync(new URL("../../../cc-usage/hooks/hooks.json", import.meta.url), "utf8"),
+  ) as {
+    hooks?: { SessionEnd?: Array<{ hooks?: Array<Record<string, unknown>> }> };
+  };
+  const handler = config.hooks?.SessionEnd?.[0]?.hooks?.[0];
+  assert.equal(handler?.async, true);
+  assert.equal(handler?.timeout, 3);
+});

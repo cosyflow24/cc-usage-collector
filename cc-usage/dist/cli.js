@@ -3226,6 +3226,10 @@ function buildSession(sessionId, recs, opts) {
   const start = recs[0].timestamp;
   const provider = recs[0].provider;
   const composite = sessionTaskKey(provider, sessionId);
+  const scopedAccount = opts.sessionAccounts?.get(composite);
+  const legacyClaudeAccount = provider === "claude" ? opts.sessionAccounts?.get(sessionId) : void 0;
+  const hasProviderIdentity = opts.providerUsers ? Object.prototype.hasOwnProperty.call(opts.providerUsers, provider) : false;
+  const providerUser = hasProviderIdentity ? opts.providerUsers?.[provider] : opts.user;
   const end = recs[recs.length - 1].timestamp;
   const last = (pick) => {
     for (let i = recs.length - 1; i >= 0; i--) {
@@ -3237,7 +3241,7 @@ function buildSession(sessionId, recs, opts) {
   const cwd = last((r) => r.cwd);
   const branch = last((r) => r.gitBranch);
   const project = cwd ? path2.basename(cwd) : null;
-  const declared = opts.sessionTasks?.get(composite) ?? opts.sessionTasks?.get(sessionId);
+  const declared = opts.sessionTasks?.get(composite) ?? (provider === "claude" ? opts.sessionTasks?.get(sessionId) : void 0);
   const jiraKey = declared?.jira ?? resolveJiraKey({ branch, cwd, project }, start, end, opts.jira ?? defaultJiraConfig);
   const epicKey = declared?.epic ?? null;
   const perModel = /* @__PURE__ */ new Map();
@@ -3275,7 +3279,7 @@ function buildSession(sessionId, recs, opts) {
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.providerUsers?.[provider] ?? opts.user,
+    user: scopedAccount?.account ?? legacyClaudeAccount?.account ?? providerUser ?? `unknown-${provider}-account`,
     project,
     gitBranch: branch,
     jiraKey,
@@ -3590,21 +3594,39 @@ function normalizeSnapshot(value) {
   const requestedWrite = nonNegative(row.cache_write_input_tokens) ?? 0;
   const cacheCreation = Math.min(totalInput - cacheRead, requestedWrite);
   return {
-    inputTokens: totalInput - cacheRead - cacheCreation,
+    totalInputTokens: totalInput,
     outputTokens: output,
     cacheCreationTokens: cacheCreation,
     cacheReadTokens: cacheRead
   };
 }
-function deltaSnapshot(current, previous) {
-  if (!previous) return current;
-  const delta = {
-    inputTokens: current.inputTokens - previous.inputTokens,
-    outputTokens: current.outputTokens - previous.outputTokens,
-    cacheCreationTokens: current.cacheCreationTokens - previous.cacheCreationTokens,
-    cacheReadTokens: current.cacheReadTokens - previous.cacheReadTokens
+function snapshotAsDelta(snapshot) {
+  return {
+    inputTokens: snapshot.totalInputTokens - snapshot.cacheReadTokens - snapshot.cacheCreationTokens,
+    outputTokens: snapshot.outputTokens,
+    cacheCreationTokens: snapshot.cacheCreationTokens,
+    cacheReadTokens: snapshot.cacheReadTokens
   };
-  return Object.values(delta).some((v) => v < 0) ? null : delta;
+}
+function deltaSnapshot(current, previous) {
+  if (!previous) return snapshotAsDelta(current);
+  const inputDelta = current.totalInputTokens - previous.totalInputTokens;
+  const outputDelta = current.outputTokens - previous.outputTokens;
+  if (inputDelta < 0 || outputDelta < 0) return null;
+  const cacheReadTokens = Math.min(
+    inputDelta,
+    Math.max(0, current.cacheReadTokens - previous.cacheReadTokens)
+  );
+  const cacheCreationTokens = Math.min(
+    inputDelta - cacheReadTokens,
+    Math.max(0, current.cacheCreationTokens - previous.cacheCreationTokens)
+  );
+  return {
+    inputTokens: inputDelta - cacheReadTokens - cacheCreationTokens,
+    outputTokens: outputDelta,
+    cacheCreationTokens,
+    cacheReadTokens
+  };
 }
 function responseKind(payload) {
   if (!payload || typeof payload !== "object") return null;
@@ -3766,7 +3788,7 @@ async function parseFile(file, since, until, skipThroughOrdinal = 0) {
       payload.info.total_token_usage
     );
     if (!snapshot) continue;
-    const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
+    const delta = deltaSnapshot(snapshot, previous) ?? snapshotAsDelta(snapshot);
     previous = snapshot;
     if (ordinal <= skipThroughOrdinal || !inRange || Object.values(delta).every((v) => v === 0)) continue;
     records.push(makeRecord(
@@ -3923,7 +3945,9 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
     user,
     providerUsers: opts.user ? { claude: user, codex: user } : {
       claude: resolveAccountEmail() ?? user,
-      codex: resolveCodexAccountEmail() ?? user
+      // Fail closed: an unreadable/missing Codex identity must never borrow
+      // the Claude work email and thereby pass the upload work-domain gate.
+      codex: resolveCodexAccountEmail()
     },
     since,
     until,

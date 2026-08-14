@@ -86,6 +86,25 @@ test("provider-specific account fallback does not assign Codex to Claude", () =>
   );
 });
 
+test("missing Codex identity fails closed instead of borrowing the Claude account", () => {
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([codex], {
+    user: "claude@nnb24.de",
+    providerUsers: { claude: "claude@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    // Bare legacy account entries belong to Claude and must not cross providers.
+    sessionAccounts: new Map([["codex-id", { account: "claude@nnb24.de" }]]),
+  });
+  assert.equal(result.sessions[0]?.user, "unknown-codex-account");
+});
+
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {
   // Two sessions on the SAME local day, each signed into a different account
   // (per-session attribution via sessionAccounts). 9 events at 4-min intervals

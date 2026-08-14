@@ -7,8 +7,15 @@ import type { EventKind, UsageRecord } from "./types.ts";
 
 const MAX_LINE_LEN = 1_000_000;
 
-interface NormalizedSnapshot {
+interface TokenDelta {
   inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+interface CumulativeSnapshot {
+  totalInputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
@@ -65,7 +72,7 @@ function nonNegative(v: unknown): number | null {
 }
 
 /** Codex input_tokens includes cached/write tokens; split it without double-counting. */
-function normalizeSnapshot(value: unknown): NormalizedSnapshot | null {
+function normalizeSnapshot(value: unknown): CumulativeSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   const totalInput = nonNegative(row.input_tokens);
@@ -76,25 +83,48 @@ function normalizeSnapshot(value: unknown): NormalizedSnapshot | null {
   const requestedWrite = nonNegative(row.cache_write_input_tokens) ?? 0;
   const cacheCreation = Math.min(totalInput - cacheRead, requestedWrite);
   return {
-    inputTokens: totalInput - cacheRead - cacheCreation,
+    totalInputTokens: totalInput,
     outputTokens: output,
     cacheCreationTokens: cacheCreation,
     cacheReadTokens: cacheRead,
   };
 }
 
-function deltaSnapshot(
-  current: NormalizedSnapshot,
-  previous: NormalizedSnapshot | null,
-): NormalizedSnapshot | null {
-  if (!previous) return current;
-  const delta = {
-    inputTokens: current.inputTokens - previous.inputTokens,
-    outputTokens: current.outputTokens - previous.outputTokens,
-    cacheCreationTokens: current.cacheCreationTokens - previous.cacheCreationTokens,
-    cacheReadTokens: current.cacheReadTokens - previous.cacheReadTokens,
+function snapshotAsDelta(snapshot: CumulativeSnapshot): TokenDelta {
+  return {
+    inputTokens:
+      snapshot.totalInputTokens - snapshot.cacheReadTokens - snapshot.cacheCreationTokens,
+    outputTokens: snapshot.outputTokens,
+    cacheCreationTokens: snapshot.cacheCreationTokens,
+    cacheReadTokens: snapshot.cacheReadTokens,
   };
-  return Object.values(delta).some((v) => v < 0) ? null : delta;
+}
+
+function deltaSnapshot(
+  current: CumulativeSnapshot,
+  previous: CumulativeSnapshot | null,
+): TokenDelta | null {
+  if (!previous) return snapshotAsDelta(current);
+  const inputDelta = current.totalInputTokens - previous.totalInputTokens;
+  const outputDelta = current.outputTokens - previous.outputTokens;
+  // Only authoritative aggregate counters identify a new cumulative segment.
+  // Cache/fresh categories can be reclassified between snapshots while the
+  // aggregate remains monotonic; treating that as a reset double-counts usage.
+  if (inputDelta < 0 || outputDelta < 0) return null;
+  const cacheReadTokens = Math.min(
+    inputDelta,
+    Math.max(0, current.cacheReadTokens - previous.cacheReadTokens),
+  );
+  const cacheCreationTokens = Math.min(
+    inputDelta - cacheReadTokens,
+    Math.max(0, current.cacheCreationTokens - previous.cacheCreationTokens),
+  );
+  return {
+    inputTokens: inputDelta - cacheReadTokens - cacheCreationTokens,
+    outputTokens: outputDelta,
+    cacheCreationTokens,
+    cacheReadTokens,
+  };
 }
 
 function responseKind(payload: unknown): EventKind | null {
@@ -235,7 +265,7 @@ function makeRecord(
   model: string | null,
   cwd: string | null,
   kind: EventKind,
-  tokens: NormalizedSnapshot,
+  tokens: TokenDelta,
   dedupeKey: string,
 ): UsageRecord {
   return {
@@ -264,7 +294,7 @@ async function parseFile(
   let meta: SessionMeta | null = null;
   let model: string | null = null;
   let cwd: string | null = null;
-  let previous: NormalizedSnapshot | null = null;
+  let previous: CumulativeSnapshot | null = null;
   for await (const { ordinal, value: row } of readJsonRows(file)) {
     if (row.type === "session_meta") {
       // A subagent rollout starts with its own metadata, then embeds one or more
@@ -306,7 +336,7 @@ async function parseFile(
     // Codex can reset cumulative counters after compaction. A decrease starts a
     // new cumulative segment; count the new segment's current snapshot instead
     // of dropping it (and every later snapshot below the old high-water mark).
-    const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
+    const delta = deltaSnapshot(snapshot, previous) ?? snapshotAsDelta(snapshot);
     previous = snapshot;
     if (
       ordinal <= skipThroughOrdinal ||

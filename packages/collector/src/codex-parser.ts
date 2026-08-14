@@ -160,7 +160,11 @@ async function parseFile(file: string, since: Date, until: Date): Promise<UsageR
       continue;
     }
     if (row.type === "session_meta") {
-      meta = parseMeta(row.payload) ?? meta;
+      // A subagent rollout starts with its own metadata, then embeds one or more
+      // parent-history session_meta rows. The filename and all following live
+      // events belong to the first id; replacing it would collapse child usage
+      // into the parent session and corrupt task/thread attribution.
+      if (!meta) meta = parseMeta(row.payload);
       continue;
     }
     if (!meta) continue;
@@ -192,8 +196,10 @@ async function parseFile(file: string, since: Date, until: Date): Promise<UsageR
       (payload.info as Record<string, unknown>).total_token_usage,
     );
     if (!snapshot) continue;
-    const delta = deltaSnapshot(snapshot, previous);
-    if (!delta) continue;
+    // Codex can reset cumulative counters after compaction. A decrease starts a
+    // new cumulative segment; count the new segment's current snapshot instead
+    // of dropping it (and every later snapshot below the old high-water mark).
+    const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
     previous = snapshot;
     if (!inRange || Object.values(delta).every((v) => v === 0)) continue;
     records.push(makeRecord(

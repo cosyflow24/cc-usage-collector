@@ -3145,6 +3145,7 @@ function loadSessionAccounts(file = sidecarPath()) {
       latestTs.set(composite, ts);
       const acct = { account: row.account };
       if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
+      acct.providerVerified = provider === "claude" || row.identitySource === "codex-id-token";
       result.set(composite, acct);
     }
   }
@@ -3227,6 +3228,7 @@ function buildSession(sessionId, recs, opts) {
   const provider = recs[0].provider;
   const composite = sessionTaskKey(provider, sessionId);
   const scopedAccount = opts.sessionAccounts?.get(composite);
+  const trustedScopedAccount = provider === "codex" && scopedAccount?.providerVerified !== true ? void 0 : scopedAccount;
   const legacyClaudeAccount = provider === "claude" ? opts.sessionAccounts?.get(sessionId) : void 0;
   const hasProviderIdentity = opts.providerUsers ? Object.prototype.hasOwnProperty.call(opts.providerUsers, provider) : false;
   const providerUser = hasProviderIdentity ? opts.providerUsers?.[provider] : opts.user;
@@ -3279,7 +3281,7 @@ function buildSession(sessionId, recs, opts) {
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: scopedAccount?.account ?? legacyClaudeAccount?.account ?? providerUser ?? `unknown-${provider}-account`,
+    user: trustedScopedAccount?.account ?? legacyClaudeAccount?.account ?? providerUser ?? `unknown-${provider}-account`,
     project,
     gitBranch: branch,
     jiraKey,

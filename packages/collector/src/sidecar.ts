@@ -63,6 +63,8 @@ export interface SessionAccount {
   account: string;
   /** organizationType, e.g. "claude_max" | "enterprise". */
   plan?: string;
+  /** True only when the row was captured from that provider's own auth store. */
+  providerVerified?: boolean;
 }
 
 /**
@@ -83,7 +85,14 @@ export function loadSessionAccounts(file = sidecarPath()): Map<string, SessionAc
   const result = new Map<string, SessionAccount>();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let row: { provider?: unknown; sessionId?: unknown; account?: unknown; plan?: unknown; ts?: unknown };
+    let row: {
+      provider?: unknown;
+      sessionId?: unknown;
+      account?: unknown;
+      plan?: unknown;
+      identitySource?: unknown;
+      ts?: unknown;
+    };
     try {
       row = JSON.parse(line);
     } catch {
@@ -100,6 +109,7 @@ export function loadSessionAccounts(file = sidecarPath()): Map<string, SessionAc
       latestTs.set(composite, ts);
       const acct: SessionAccount = { account: row.account };
       if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
+      acct.providerVerified = provider === "claude" || row.identitySource === "codex-id-token";
       result.set(composite, acct);
     }
   }

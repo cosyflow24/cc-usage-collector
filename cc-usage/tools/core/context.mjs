@@ -6,7 +6,10 @@ import { createInterface } from "node:readline";
 import { STATE_DIR } from "./config.mjs";
 
 const JIRA = /^[A-Z][A-Z0-9]+-\d+$/;
-const UUIDISH = /^[0-9a-z][0-9a-z-]{7,}$/i;
+// Claude and Codex session ids are UUID-shaped. A looser "contains a dash"
+// check misclassified normal project slugs such as `cc-usage-collector` as a
+// session id, so project lookup silently returned no matches.
+const SESSION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MAX_LINE = 2_000_000;
 
 function defaults() {
@@ -125,14 +128,16 @@ export async function findSessions(selector, options = {}) {
   const { provider, value } = selectorParts(selector);
   if (!value) throw new Error("session selector is required");
   const upper = value.toUpperCase();
-  const isSessionId = UUIDISH.test(value) && value.includes("-");
+  const isSessionId = SESSION_ID.test(value);
   const jira = !isSessionId && JIRA.test(upper) ? upper : null;
   const index = await buildIndex(options);
   const filtered = index.filter((row) => {
     if (provider && row.provider !== provider) return false;
     if (jira) return row.jira === jira;
     if (isSessionId) return row.sessionId === value;
-    return basename(row.cwd || "").toLowerCase() === value.toLowerCase();
+    const cwd = String(row.cwd || "").replace(/\/$/, "").toLowerCase();
+    const wanted = value.replace(/\/$/, "").toLowerCase();
+    return cwd === wanted || basename(cwd) === wanted;
   });
   return filtered.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
 }

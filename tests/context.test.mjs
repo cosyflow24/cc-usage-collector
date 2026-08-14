@@ -47,6 +47,34 @@ test("findSessions resolves one Jira task across Claude and Codex", async () => 
   }
 });
 
+test("findSessions treats hyphenated project names as projects, not session ids", async () => {
+  const f = fixture();
+  try {
+    const found = await findSessions("my-work-app", {
+      claudeProjectsDir: f.claude,
+      codexSessionsDir: f.codex,
+      tasksFile: f.taskFile,
+    });
+    assert.equal(found.length, 0);
+
+    const byName = await findSessions("app", {
+      claudeProjectsDir: f.claude,
+      codexSessionsDir: f.codex,
+      tasksFile: f.taskFile,
+    });
+    assert.deepEqual(byName.map((s) => s.provider).sort(), ["claude", "codex"]);
+
+    const byPath = await findSessions("/work/app", {
+      claudeProjectsDir: f.claude,
+      codexSessionsDir: f.codex,
+      tasksFile: f.taskFile,
+    });
+    assert.deepEqual(byPath.map((s) => s.provider).sort(), ["claude", "codex"]);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("later account metadata does not erase an earlier task binding", async () => {
   const root = mkdtempSync(join(tmpdir(), "cc-usage-context-task-"));
   const claude = join(root, "claude");

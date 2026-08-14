@@ -69,6 +69,7 @@ test("Codex account capture reads Codex auth rather than Claude auth", () => {
     );
     assert.equal(row.account, "codex@nnb24.de");
     assert.equal(row.provider, "codex");
+    assert.equal(row.identitySource, "codex-id-token");
   } finally {
     rmSync(sandbox, { recursive: true, force: true });
   }

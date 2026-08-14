@@ -175,6 +175,7 @@ export function captureAccount(sid, cwd, provider = "claude") {
     if (account.includes("@")) {
       appendRow({
         schemaVersion: 1, provider, sessionId: sid, account, cwd,
+        identitySource: provider === "codex" ? "codex-id-token" : "claude-oauth",
         ts: new Date().toISOString(), src: "hook-acct",
       });
     }

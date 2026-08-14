@@ -272,10 +272,10 @@ async function doctor() {
   else out("     (launcher not installed — run cc-usage login or cc-usage refresh)");
 
   if (existsSync(resolverPath)) ok(`resolver ${resolverPath}`);
-  else nope(`resolver copy missing (${resolverPath}) — start a Claude session to regenerate`);
+  else nope(`resolver copy missing (${resolverPath}) — run cc-usage refresh from the installed plugin`);
   const runtime = resolveRuntime();
   if (runtime) ok(`runtime ${runtime.version} at ${runtime.root}`);
-  else nope("no valid plugin runtime registered — start a Claude session, or reinstall the plugin");
+  else nope("no valid plugin runtime registered — run cc-usage refresh, or reinstall the plugin");
 
   const legacyEnv = join(STATE_DIR, "env");
   if (existsSync(legacyEnv) && /CC_USAGE_INGEST_TOKEN=\S/.test(readFileSync(legacyEnv, "utf8"))) {
@@ -285,11 +285,11 @@ async function doctor() {
   if (existsSync(plist)) {
     const compat = join(STATE_DIR, "bin", "sync.sh");
     if (!existsSync(compat)) {
-      out("     LaunchAgent present; open one Claude session so the compat bin/sync.sh regenerates.");
+      out("     LaunchAgent present; run cc-usage refresh so the compat bin/sync.sh regenerates.");
     } else if (readFileSync(compat, "utf8").includes(resolverPath)) {
       out("     LaunchAgent present; bin/sync.sh points at the stable resolver.");
     } else {
-      nope("bin/sync.sh still points at a versioned path — start a Claude session to heal it");
+      nope("bin/sync.sh still points at a versioned path — run cc-usage refresh to heal it");
     }
   }
 

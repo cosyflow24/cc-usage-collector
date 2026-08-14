@@ -99,10 +99,34 @@ test("missing Codex identity fails closed instead of borrowing the Claude accoun
     until: new Date("2026-07-14T00:00:00"),
     idleGapMs: 30 * 60_000,
     jira: { scanCommits: false },
-    // Bare legacy account entries belong to Claude and must not cross providers.
-    sessionAccounts: new Map([["codex-id", { account: "claude@nnb24.de" }]]),
+    // Bare legacy rows and pre-fix provider-scoped rows both belong to Claude.
+    sessionAccounts: new Map([
+      ["codex-id", { account: "claude@nnb24.de" }],
+      ["codex:codex-id", { account: "claude@nnb24.de" }],
+    ]),
   });
   assert.equal(result.sessions[0]?.user, "unknown-codex-account");
+});
+
+test("verified historical Codex identity remains valid after the account signs out", () => {
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([codex], {
+    user: "claude@nnb24.de",
+    providerUsers: { claude: "claude@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([[
+      "codex:codex-id",
+      { account: "codex@nnb24.de", providerVerified: true },
+    ]]),
+  });
+  assert.equal(result.sessions[0]?.user, "codex@nnb24.de");
 });
 
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {

@@ -4,14 +4,14 @@
     "name": "cosyflow24"
   },
   "metadata": {
-    "description": "cc-usage team analytics for Claude Code — one plugin, installed from this repo.",
-    "version": "0.5.0"
+    "description": "cc-usage team analytics for Claude Code and Codex — one plugin, installed from this repo.",
+    "version": "0.6.0"
   },
   "plugins": [
     {
       "name": "cc-usage",
       "source": "./cc-usage",
-      "description": "Track Claude Code usage (tokens, notional cost, active-time) per session/project/Jira label and upload to the team dashboard. Metadata only; no Jira connection. Adds /task, /burn, /cc-usage-login, and /cc-usage-doctor."
+      "description": "Track Claude Code and Codex usage per session/project/Jira label, plus restore local-only session context. Metadata-only uploads; no Jira connection."
     }
   ]
 }

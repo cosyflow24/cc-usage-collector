@@ -12,7 +12,11 @@ const totals: TokenTotals = {
 };
 
 const session: SessionSummary = {
+  provider: "claude",
   sessionId: "s1",
+  parentSessionId: null,
+  rootSessionId: "s1",
+  agentRole: null,
   user: "dev@nnb24.de", // work domain → passes the upload gate
   project: "proj",
   gitBranch: "main",
@@ -71,9 +75,9 @@ test("httpUpload: wire payload is an explicit projection — fields outside the 
   assert.deepEqual(
     Object.keys(wire.sessions[0]!).sort(),
     [
-      "activeTimeHours", "day", "epicKey", "epicSummary", "gitBranch", "jiraKey",
-      "messageCount", "modelUsage", "models", "notionalCostUsd", "project",
-      "sessionId", "totals", "user",
+      "activeTimeHours", "agentRole", "day", "epicKey", "epicSummary", "gitBranch", "jiraKey",
+      "messageCount", "modelUsage", "models", "notionalCostUsd", "parentSessionId",
+      "project", "provider", "rootSessionId", "sessionId", "totals", "user",
     ],
   );
 });

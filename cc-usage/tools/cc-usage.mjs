@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Unified cc-usage CLI. One dependency-free ESM entry point over the collector
-// bundle + OS-keyring credentials + the Claude Code hooks. Mirrors nnb-jira's
+// bundle + OS-keyring credentials + the Claude Code/Codex hooks. Mirrors nnb-jira's
 // tools/jira.mjs packaging (dispatch, options(), hiddenQuestion(), launcher).
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, platform } from "node:os";
@@ -23,9 +23,10 @@ import {
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
 import { verifyToken } from "./core/verify.mjs";
+import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const out = (value = "") => process.stdout.write(`${value}\n`);
 const fail = (message, code = 1) => { const e = new Error(message); e.exitCode = code; throw e; };
 const need = (value, message) => value || fail(message);
@@ -134,6 +135,55 @@ function task(args) {
   out(setTask(key, epic, process.cwd()));
 }
 
+async function sessions(args) {
+  const { positional, values } = options(args, { "--json": "!json" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage sessions <session-id|Jira-key|project> [--json]");
+  const found = await findSessions(selector);
+  if (values.json) {
+    out(JSON.stringify(found.map(({ file: _file, ...row }) => row), null, 2));
+    return;
+  }
+  if (!found.length) fail(`no local session found for ${selector}`, 2);
+  for (const row of found) {
+    out(`${row.provider}:${row.sessionId}\t${row.jira || "unassigned"}\t${row.cwd || "unknown"}\t${row.timestamp || ""}`);
+  }
+}
+
+async function context(args) {
+  const { positional, values } = options(args, { "--max-chars": "maxChars" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage context <session-id|Jira-key|project> [--max-chars N]");
+  const maxChars = values.maxChars === undefined ? undefined : Number(values.maxChars);
+  if (maxChars !== undefined && (!Number.isFinite(maxChars) || maxChars < 2000)) {
+    fail("--max-chars must be a number >= 2000");
+  }
+  out(await renderContext(selector, { maxChars }));
+}
+
+async function resume(args) {
+  const { positional, values } = options(args, { "--exec": "!exec" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage resume <session-id|Jira-key|project> [--exec]");
+  const found = await findSessions(selector);
+  if (!found.length) fail(`no local session found for ${selector}`, 2);
+  const session = found[0];
+  if (session.provider !== "codex") {
+    out(await renderContext(`claude:${session.sessionId}`));
+    process.stderr.write("Claude sessions cannot be resumed natively in Codex; local context was emitted instead.\n");
+    return;
+  }
+  if (!values.exec) {
+    out(`codex resume ${session.sessionId}`);
+    return;
+  }
+  if (process.env.CODEX_THREAD_ID) {
+    fail("cannot start a nested interactive Codex session; run the printed resume command in a terminal", 2);
+  }
+  const result = spawnSync("codex", ["resume", session.sessionId], { stdio: "inherit" });
+  if (result.status !== 0) fail(`codex resume exited ${result.status ?? 1}`, result.status ?? 1);
+}
+
 function burn() {
   out(`burn · ${(process.cwd().split("/").pop() || "")} · ${new Date().toTimeString().slice(0, 5)}`);
   out();
@@ -158,7 +208,10 @@ function contract() {
     schemaVersion: 1,
     name: "cc-usage",
     version: VERSION,
-    capabilities: ["collect", "sync", "task-attribution", "hooks", "burn", "keyring"],
+    capabilities: [
+      "collect", "sync", "task-attribution", "local-context", "codex-resume",
+      "hooks", "burn", "keyring",
+    ],
     state: { dir: STATE_DIR, schemaVersion: 1 },
   }, null, 2));
 }
@@ -269,6 +322,9 @@ function help(topic) {
   sync [--days N] [--dry-run]               upload the last N days of usage
   collect [collector args...]               run the analyzer directly (passthrough)
   task <last|none|KEY> [EPIC]               attribute this session to a Jira key
+  sessions <ID|KEY|project> [--json]        find matching Claude/Codex sessions
+  context <ID|KEY|project> [--max-chars N]  print local-only conversation context
+  resume <ID|KEY|project> [--exec]          print/run native Codex resume; import Claude context
   burn                                      live 5h rate-limit window view
   doctor                                    health check (no upload)
   config | contract | migrate               show config / capabilities / migrate token
@@ -306,6 +362,9 @@ async function main() {
   if (command === "sync") process.exit(sync(args));
   if (command === "collect") process.exit(collect(args));
   if (command === "task") return task(args);
+  if (command === "sessions") return sessions(args);
+  if (command === "context") return context(args);
+  if (command === "resume") return resume(args);
   if (command === "burn") return burn();
   if (command === "doctor") return doctor();
   if (command === "config") return showConfig();

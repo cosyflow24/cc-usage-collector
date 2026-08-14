@@ -7,7 +7,11 @@ import type { UsageRecord } from "../src/types.ts";
 // localDay() buckets them deterministically regardless of the machine's TZ.
 function rec(sessionId: string, iso: string): UsageRecord {
   return {
+    provider: "claude",
     sessionId,
+    parentSessionId: null,
+    rootSessionId: sessionId,
+    agentRole: null,
     timestamp: new Date(iso),
     model: "claude-sonnet-4",
     cwd: "/w/proj",
@@ -20,6 +24,37 @@ function rec(sessionId: string, iso: string): UsageRecord {
     kind: "prompt",
   };
 }
+
+test("provider is part of session identity and daily usage stays unified", () => {
+  const claude = rec("same-id", "2026-07-13T10:00:00");
+  const codex: UsageRecord = {
+    ...rec("same-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    inputTokens: 20,
+    outputTokens: 7,
+  };
+  const result = analyze([claude, codex], {
+    user: "work@nnb24.de",
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionTasks: new Map([
+      ["claude:same-id", { jira: "BI-1" }],
+      ["codex:same-id", { jira: "BI-2" }],
+    ]),
+  });
+
+  assert.equal(result.sessions.length, 2);
+  assert.deepEqual(
+    result.sessions.map((s) => `${s.provider}:${s.sessionId}:${s.jiraKey}`).sort(),
+    ["claude:same-id:BI-1", "codex:same-id:BI-2"],
+  );
+  assert.equal(result.daily.length, 1);
+  assert.equal(result.daily[0]!.sessions, 2);
+  assert.equal(result.daily[0]!.totals.totalTokens, 42);
+});
 
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {
   // Two sessions on the SAME local day, each signed into a different account

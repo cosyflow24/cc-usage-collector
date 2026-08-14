@@ -1,6 +1,12 @@
+export type UsageProvider = "claude" | "codex";
+
 /** Normalized usage record extracted from one JSONL line. */
 export interface UsageRecord {
+  provider: UsageProvider;
   sessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  agentRole: string | null;
   timestamp: Date;
   model: string | null;
   cwd: string | null;
@@ -46,7 +52,11 @@ export interface ModelUsage extends TokenTotals {
 }
 
 export interface SessionSummary {
+  provider: UsageProvider;
   sessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  agentRole: string | null;
   user: string;
   project: string | null;
   gitBranch: string | null;

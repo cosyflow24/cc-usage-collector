@@ -953,7 +953,7 @@ var require_command = __commonJS({
     "use strict";
     var EventEmitter = __require("events").EventEmitter;
     var childProcess = __require("child_process");
-    var path4 = __require("path");
+    var path5 = __require("path");
     var fs = __require("fs");
     var process2 = __require("process");
     var { Argument: Argument2, humanReadableArgName } = require_argument();
@@ -1886,9 +1886,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
         let launchWithNode = false;
         const sourceExt = [".js", ".ts", ".tsx", ".mjs", ".cjs"];
         function findFile(baseDir, baseName) {
-          const localBin = path4.resolve(baseDir, baseName);
+          const localBin = path5.resolve(baseDir, baseName);
           if (fs.existsSync(localBin)) return localBin;
-          if (sourceExt.includes(path4.extname(baseName))) return void 0;
+          if (sourceExt.includes(path5.extname(baseName))) return void 0;
           const foundExt = sourceExt.find(
             (ext) => fs.existsSync(`${localBin}${ext}`)
           );
@@ -1906,17 +1906,17 @@ Expecting one of '${allowedValues.join("', '")}'`);
           } catch (err) {
             resolvedScriptPath = this._scriptPath;
           }
-          executableDir = path4.resolve(
-            path4.dirname(resolvedScriptPath),
+          executableDir = path5.resolve(
+            path5.dirname(resolvedScriptPath),
             executableDir
           );
         }
         if (executableDir) {
           let localFile = findFile(executableDir, executableFile);
           if (!localFile && !subcommand._executableFile && this._scriptPath) {
-            const legacyName = path4.basename(
+            const legacyName = path5.basename(
               this._scriptPath,
-              path4.extname(this._scriptPath)
+              path5.extname(this._scriptPath)
             );
             if (legacyName !== this._name) {
               localFile = findFile(
@@ -1927,7 +1927,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
           }
           executableFile = localFile || executableFile;
         }
-        launchWithNode = sourceExt.includes(path4.extname(executableFile));
+        launchWithNode = sourceExt.includes(path5.extname(executableFile));
         let proc;
         if (process2.platform !== "win32") {
           if (launchWithNode) {
@@ -2767,7 +2767,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
        * @return {Command}
        */
       nameFromFilename(filename) {
-        this._name = path4.basename(filename, path4.extname(filename));
+        this._name = path5.basename(filename, path5.extname(filename));
         return this;
       }
       /**
@@ -2781,9 +2781,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
        * @param {string} [path]
        * @return {(string|null|Command)}
        */
-      executableDir(path5) {
-        if (path5 === void 0) return this._executableDir;
-        this._executableDir = path5;
+      executableDir(path6) {
+        if (path6 === void 0) return this._executableDir;
+        this._executableDir = path6;
         return this;
       }
       /**
@@ -3032,7 +3032,7 @@ var {
 } = import_index.default;
 
 // src/analyze.ts
-import path from "path";
+import path2 from "path";
 
 // src/pricing.ts
 var CACHE_WRITE_MULTIPLIER = 1.25;
@@ -3068,10 +3068,87 @@ function rateFor(model) {
   }
   return DEFAULT_RATE;
 }
-function costForModelUsage(mu) {
+function costForModelUsage(mu, provider = "claude") {
+  if (provider === "codex") return 0;
   const r = rateFor(mu.model);
   const cost = (mu.inputTokens * r.input + mu.outputTokens * r.output + mu.cacheCreationTokens * r.input * CACHE_WRITE_MULTIPLIER + mu.cacheReadTokens * r.input * CACHE_READ_MULTIPLIER) / PER_MILLION;
   return Number.isFinite(cost) ? cost : 0;
+}
+
+// src/sidecar.ts
+import { readFileSync } from "fs";
+import { homedir } from "os";
+import path from "path";
+function sidecarPath() {
+  const base = process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude");
+  return path.join(base, "cc-usage", "tasks.jsonl");
+}
+function sessionTaskKey(provider, sessionId) {
+  return `${provider}:${sessionId}`;
+}
+function loadSessionTasks(file = sidecarPath()) {
+  let raw;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+  const latestTs = /* @__PURE__ */ new Map();
+  const result = /* @__PURE__ */ new Map();
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof row.sessionId !== "string" || typeof row.jira !== "string" || !row.jira) continue;
+    const provider = row.provider === "codex" ? "codex" : "claude";
+    const composite = sessionTaskKey(provider, row.sessionId);
+    const ts = typeof row.ts === "string" ? row.ts : "";
+    const prev = latestTs.get(composite);
+    if (prev === void 0 || ts >= prev) {
+      latestTs.set(composite, ts);
+      const task = { jira: row.jira };
+      if (typeof row.epic === "string" && row.epic) task.epic = row.epic;
+      result.set(composite, task);
+    }
+  }
+  return result;
+}
+function loadSessionAccounts(file = sidecarPath()) {
+  let raw;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+  const latestTs = /* @__PURE__ */ new Map();
+  const result = /* @__PURE__ */ new Map();
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof row.sessionId !== "string" || typeof row.account !== "string" || !row.account) {
+      continue;
+    }
+    const provider = row.provider === "codex" ? "codex" : "claude";
+    const composite = sessionTaskKey(provider, row.sessionId);
+    const ts = typeof row.ts === "string" ? row.ts : "";
+    const prev = latestTs.get(composite);
+    if (prev === void 0 || ts >= prev) {
+      latestTs.set(composite, ts);
+      const acct = { account: row.account };
+      if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
+      result.set(composite, acct);
+    }
+  }
+  return result;
 }
 
 // src/analyze.ts
@@ -3116,14 +3193,15 @@ function activeMs(sortedRecs) {
   const open = /* @__PURE__ */ new Map();
   for (let i = 0; i < sortedRecs.length; i++) {
     const r = sortedRecs[i];
-    if (r.kind === "tool_use") open.set(r.sessionId, (open.get(r.sessionId) ?? 0) + 1);
-    else if (r.kind === "tool_result" && (open.get(r.sessionId) ?? 0) > 0)
-      open.set(r.sessionId, (open.get(r.sessionId) ?? 0) - 1);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    if (r.kind === "tool_use") open.set(key, (open.get(key) ?? 0) + 1);
+    else if (r.kind === "tool_result" && (open.get(key) ?? 0) > 0)
+      open.set(key, (open.get(key) ?? 0) - 1);
     const next = sortedRecs[i + 1];
     if (!next) break;
     const delta = next.timestamp.getTime() - r.timestamp.getTime();
     if (delta <= 0) continue;
-    if ((open.get(r.sessionId) ?? 0) > 0) {
+    if ((open.get(key) ?? 0) > 0) {
       ms += Math.min(delta, AGENT_RUN_MAX_MS);
     } else if (delta <= T_SESSION_MS) {
       ms += Math.min(delta, T_THINK_MS);
@@ -3140,6 +3218,8 @@ function roundQuarterHours(hours) {
 function buildSession(sessionId, recs, opts) {
   recs = [...recs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const start = recs[0].timestamp;
+  const provider = recs[0].provider;
+  const composite = sessionTaskKey(provider, sessionId);
   const end = recs[recs.length - 1].timestamp;
   const last = (pick) => {
     for (let i = recs.length - 1; i >= 0; i--) {
@@ -3150,8 +3230,8 @@ function buildSession(sessionId, recs, opts) {
   };
   const cwd = last((r) => r.cwd);
   const branch = last((r) => r.gitBranch);
-  const project = cwd ? path.basename(cwd) : null;
-  const declared = opts.sessionTasks?.get(sessionId);
+  const project = cwd ? path2.basename(cwd) : null;
+  const declared = opts.sessionTasks?.get(composite) ?? opts.sessionTasks?.get(sessionId);
   const jiraKey = declared?.jira ?? resolveJiraKey({ branch, cwd, project }, start, end, opts.jira ?? defaultJiraConfig);
   const epicKey = declared?.epic ?? null;
   const perModel = /* @__PURE__ */ new Map();
@@ -3166,7 +3246,7 @@ function buildSession(sessionId, recs, opts) {
     }
     addTokens(mu, r);
   }
-  const cc = opts.ccusageCost?.get(sessionId);
+  const cc = provider === "claude" ? opts.ccusageCost?.get(sessionId) : void 0;
   let modelUsage;
   let sessionTotals;
   let notionalCostUsd;
@@ -3176,16 +3256,20 @@ function buildSession(sessionId, recs, opts) {
     notionalCostUsd = cc.totalCostUsd;
   } else {
     modelUsage = [...perModel.values()];
-    for (const mu of modelUsage) mu.costUsd = costForModelUsage(mu);
+    for (const mu of modelUsage) mu.costUsd = costForModelUsage(mu, provider);
     sessionTotals = totals;
     notionalCostUsd = modelUsage.reduce((a, m) => a + m.costUsd, 0);
   }
   return {
+    provider,
     sessionId,
+    parentSessionId: recs[0].parentSessionId,
+    rootSessionId: recs[0].rootSessionId,
+    agentRole: recs[0].agentRole,
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: opts.sessionAccounts?.get(sessionId)?.account ?? opts.user,
+    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.user,
     project,
     gitBranch: branch,
     jiraKey,
@@ -3246,19 +3330,21 @@ function buildDaily(sessions) {
   }).sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
 function analyze(records, opts) {
-  const filtered = opts.project ? records.filter((r) => r.cwd && path.basename(r.cwd) === opts.project) : records;
+  const filtered = opts.project ? records.filter((r) => r.cwd && path2.basename(r.cwd) === opts.project) : records;
   const bySession = /* @__PURE__ */ new Map();
   for (const r of filtered) {
-    (bySession.get(r.sessionId) ?? bySession.set(r.sessionId, []).get(r.sessionId)).push(r);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    (bySession.get(key) ?? bySession.set(key, []).get(key)).push(r);
   }
-  const built = [...bySession.entries()].map(([id, recs]) => buildSession(id, recs, opts));
+  const built = [...bySession.values()].map((recs) => buildSession(recs[0].sessionId, recs, opts));
   const recsByDay = /* @__PURE__ */ new Map();
   const daySessions = /* @__PURE__ */ new Map();
   for (const r of filtered) {
     const d = localDay(r.timestamp);
     (recsByDay.get(d) ?? recsByDay.set(d, []).get(d)).push(r);
     const sm = daySessions.get(d) ?? daySessions.set(d, /* @__PURE__ */ new Map()).get(d);
-    (sm.get(r.sessionId) ?? sm.set(r.sessionId, []).get(r.sessionId)).push(r);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    (sm.get(key) ?? sm.set(key, []).get(key)).push(r);
   }
   const sessionActiveHours = /* @__PURE__ */ new Map();
   for (const [day, recs] of recsByDay) {
@@ -3278,7 +3364,10 @@ function analyze(records, opts) {
       sessionActiveHours.set(sid, (sessionActiveHours.get(sid) ?? 0) + share);
     }
   }
-  const sessions = built.map((s) => ({ ...s, activeTimeHours: sessionActiveHours.get(s.sessionId) ?? 0 })).sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
+  const sessions = built.map((s) => ({
+    ...s,
+    activeTimeHours: sessionActiveHours.get(sessionTaskKey(s.provider, s.sessionId)) ?? 0
+  })).sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
   const totals = emptyTotals();
   let notionalCostUsd = 0;
   for (const s of sessions) {
@@ -3397,6 +3486,9 @@ function formatTable(r) {
   lines.push(`User: ${r.user}`);
   lines.push(`Range: ${r.range.since} \u2192 ${r.range.until}`);
   lines.push("Cost is NOTIONAL (public API rates) \xB7 employees are not billed per token.");
+  if (r.sessions.some((s) => s.provider === "codex")) {
+    lines.push("Codex subscription models without a published local rate show $0, never an invented estimate.");
+  }
   lines.push("");
   lines.push("By model:");
   for (const m of r.modelUsage) {
@@ -3416,7 +3508,7 @@ function formatTable(r) {
   for (const s of r.sessions) {
     const tag = s.epicKey ?? s.jiraKey ?? s.gitBranch ?? "-";
     lines.push(
-      `  ${s.day}  ${(s.project ?? "-").padEnd(22).slice(0, 22)}  ${tag.padEnd(16).slice(0, 16)}  ${fmtCost(s.notionalCostUsd).padStart(9)}  ${fmtTokens(s.totals.totalTokens).padStart(8)}  [${s.models.join(",")}]`
+      `  ${s.day}  ${s.provider.padEnd(7)}  ${(s.project ?? "-").padEnd(22).slice(0, 22)}  ${tag.padEnd(16).slice(0, 16)}  ${fmtCost(s.notionalCostUsd).padStart(9)}  ${fmtTokens(s.totals.totalTokens).padStart(8)}  [${s.models.join(",")}]`
     );
   }
   lines.push("");
@@ -3427,11 +3519,191 @@ function formatTable(r) {
 }
 
 // src/parser.ts
+import { createReadStream as createReadStream2 } from "fs";
+import { readdir as readdir2 } from "fs/promises";
+import { createInterface as createInterface2 } from "readline";
+import { homedir as homedir3 } from "os";
+import path4 from "path";
+
+// src/codex-parser.ts
 import { createReadStream } from "fs";
 import { readdir } from "fs/promises";
+import { homedir as homedir2 } from "os";
+import path3 from "path";
 import { createInterface } from "readline";
-import { homedir } from "os";
-import path2 from "path";
+var MAX_LINE_LEN = 1e6;
+function codexSessionsDir() {
+  const base = process.env.CODEX_HOME ?? path3.join(homedir2(), ".codex");
+  return path3.join(base, "sessions");
+}
+async function listLogFiles(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      process.stderr.write(`warning: cannot read ${dir}: ${String(error)}
+`);
+    }
+    return [];
+  }
+  const files = [];
+  for (const entry of entries) {
+    const full = path3.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...await listLogFiles(full));
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(full);
+  }
+  return files;
+}
+function nonNegative(v) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+function normalizeSnapshot(value) {
+  if (!value || typeof value !== "object") return null;
+  const row = value;
+  const totalInput = nonNegative(row.input_tokens);
+  const output = nonNegative(row.output_tokens);
+  if (totalInput === null || output === null) return null;
+  const requestedRead = nonNegative(row.cached_input_tokens) ?? 0;
+  const cacheRead = Math.min(totalInput, requestedRead);
+  const requestedWrite = nonNegative(row.cache_write_input_tokens) ?? 0;
+  const cacheCreation = Math.min(totalInput - cacheRead, requestedWrite);
+  return {
+    inputTokens: totalInput - cacheRead - cacheCreation,
+    outputTokens: output,
+    cacheCreationTokens: cacheCreation,
+    cacheReadTokens: cacheRead
+  };
+}
+function deltaSnapshot(current, previous) {
+  if (!previous) return current;
+  const delta = {
+    inputTokens: current.inputTokens - previous.inputTokens,
+    outputTokens: current.outputTokens - previous.outputTokens,
+    cacheCreationTokens: current.cacheCreationTokens - previous.cacheCreationTokens,
+    cacheReadTokens: current.cacheReadTokens - previous.cacheReadTokens
+  };
+  return Object.values(delta).some((v) => v < 0) ? null : delta;
+}
+function responseKind(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload;
+  if (p.type === "message" && p.role === "user") return "prompt";
+  if (p.type === "message" && p.role === "assistant") return "answer";
+  if (p.type === "function_call" || p.type === "custom_tool_call") return "tool_use";
+  if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+    return "tool_result";
+  }
+  return null;
+}
+function parseDate(value) {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function parseMeta(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload;
+  if (typeof p.id !== "string" || !p.id) return null;
+  const rootSessionId = typeof p.session_id === "string" && p.session_id ? p.session_id : p.id;
+  return {
+    sessionId: p.id,
+    parentSessionId: typeof p.parent_thread_id === "string" && p.parent_thread_id ? p.parent_thread_id : null,
+    rootSessionId,
+    agentRole: typeof p.agent_role === "string" && p.agent_role ? p.agent_role : null,
+    cwd: typeof p.cwd === "string" && p.cwd ? p.cwd : null
+  };
+}
+function makeRecord(meta, timestamp, model, cwd, kind, tokens, dedupeKey) {
+  return {
+    provider: "codex",
+    sessionId: meta.sessionId,
+    parentSessionId: meta.parentSessionId,
+    rootSessionId: meta.rootSessionId,
+    agentRole: meta.agentRole,
+    timestamp,
+    model,
+    cwd: cwd ?? meta.cwd,
+    gitBranch: null,
+    dedupeKey,
+    kind,
+    ...tokens
+  };
+}
+async function parseFile(file, since, until) {
+  const records = [];
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let meta = null;
+  let model = null;
+  let cwd = null;
+  let previous = null;
+  let ordinal = 0;
+  for await (const line of lines) {
+    ordinal += 1;
+    if (!line || line.length > MAX_LINE_LEN) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (row.type === "session_meta") {
+      meta = parseMeta(row.payload) ?? meta;
+      continue;
+    }
+    if (!meta) continue;
+    if (row.type === "turn_context" && row.payload && typeof row.payload === "object") {
+      const payload2 = row.payload;
+      if (typeof payload2.model === "string" && payload2.model) model = payload2.model;
+      if (typeof payload2.cwd === "string" && payload2.cwd) cwd = payload2.cwd;
+      continue;
+    }
+    const timestamp = parseDate(row.timestamp);
+    if (!timestamp) continue;
+    const inRange = timestamp >= since && timestamp <= until;
+    if (row.type === "response_item") {
+      const kind = responseKind(row.payload);
+      if (kind && inRange) {
+        records.push(makeRecord(meta, timestamp, model, cwd, kind, {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0
+        }, `codex:${meta.sessionId}:${ordinal}`));
+      }
+      continue;
+    }
+    if (row.type !== "event_msg" || !row.payload || typeof row.payload !== "object") continue;
+    const payload = row.payload;
+    if (payload.type !== "token_count" || !payload.info || typeof payload.info !== "object") continue;
+    const snapshot = normalizeSnapshot(
+      payload.info.total_token_usage
+    );
+    if (!snapshot) continue;
+    const delta = deltaSnapshot(snapshot, previous);
+    if (!delta) continue;
+    previous = snapshot;
+    if (!inRange || Object.values(delta).every((v) => v === 0)) continue;
+    records.push(makeRecord(
+      meta,
+      timestamp,
+      model,
+      cwd,
+      "answer",
+      delta,
+      `codex:${meta.sessionId}:tokens:${ordinal}`
+    ));
+  }
+  return records;
+}
+async function readCodexRecords(since, until, dir = codexSessionsDir()) {
+  const files = await listLogFiles(dir);
+  const nested = await Promise.all(files.map((file) => parseFile(file, since, until)));
+  return nested.flat();
+}
+
+// src/parser.ts
 function classifyKind(type, content) {
   const blocks = Array.isArray(content) ? content : [];
   const has = (t) => blocks.some((b) => b && b.type === t);
@@ -3443,13 +3715,13 @@ function classifyKind(type, content) {
   return "other";
 }
 function projectsDir() {
-  const base = process.env.CLAUDE_CONFIG_DIR ?? path2.join(homedir(), ".claude");
-  return path2.join(base, "projects");
+  const base = process.env.CLAUDE_CONFIG_DIR ?? path4.join(homedir3(), ".claude");
+  return path4.join(base, "projects");
 }
-async function listLogFiles(dir) {
+async function listLogFiles2(dir) {
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    entries = await readdir2(dir, { withFileTypes: true });
   } catch (err) {
     if (err?.code !== "ENOENT") {
       process.stderr.write(`warning: cannot read ${dir}: ${String(err)}
@@ -3459,8 +3731,8 @@ async function listLogFiles(dir) {
   }
   const out = [];
   for (const e of entries) {
-    const full = path2.join(dir, e.name);
-    if (e.isDirectory()) out.push(...await listLogFiles(full));
+    const full = path4.join(dir, e.name);
+    if (e.isDirectory()) out.push(...await listLogFiles2(full));
     else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(full);
   }
   return out;
@@ -3468,9 +3740,9 @@ async function listLogFiles(dir) {
 function num2(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
 }
-var MAX_LINE_LEN = 1e6;
+var MAX_LINE_LEN2 = 1e6;
 function parseLine(line) {
-  if (!line || line.length > MAX_LINE_LEN) return null;
+  if (!line || line.length > MAX_LINE_LEN2) return null;
   let row;
   try {
     row = JSON.parse(line);
@@ -3486,7 +3758,11 @@ function parseLine(line) {
   const msgId = typeof row?.message?.id === "string" ? row.message.id : null;
   const reqId = typeof row?.requestId === "string" ? row.requestId : "";
   return {
+    provider: "claude",
     sessionId,
+    parentSessionId: null,
+    rootSessionId: sessionId,
+    agentRole: null,
     timestamp: date,
     model: typeof row?.message?.model === "string" ? row.message.model : null,
     cwd: typeof row?.cwd === "string" ? row.cwd : null,
@@ -3500,12 +3776,12 @@ function parseLine(line) {
   };
 }
 async function readRecords(since, until, dir = projectsDir()) {
-  const files = await listLogFiles(dir);
+  const files = await listLogFiles2(dir);
   const records = [];
   const seen = /* @__PURE__ */ new Set();
   for (const file of files) {
-    const rl = createInterface({
-      input: createReadStream(file, { encoding: "utf8" }),
+    const rl = createInterface2({
+      input: createReadStream2(file, { encoding: "utf8" }),
       crlfDelay: Infinity
     });
     for await (const line of rl) {
@@ -3520,80 +3796,18 @@ async function readRecords(since, until, dir = projectsDir()) {
   }
   return records;
 }
-
-// src/sidecar.ts
-import { readFileSync } from "fs";
-import { homedir as homedir2 } from "os";
-import path3 from "path";
-function sidecarPath() {
-  const base = process.env.CLAUDE_CONFIG_DIR ?? path3.join(homedir2(), ".claude");
-  return path3.join(base, "cc-usage", "tasks.jsonl");
-}
-function loadSessionTasks(file = sidecarPath()) {
-  let raw;
-  try {
-    raw = readFileSync(file, "utf8");
-  } catch {
-    return /* @__PURE__ */ new Map();
-  }
-  const latestTs = /* @__PURE__ */ new Map();
-  const result = /* @__PURE__ */ new Map();
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    let row;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (typeof row.sessionId !== "string" || typeof row.jira !== "string" || !row.jira) continue;
-    const ts = typeof row.ts === "string" ? row.ts : "";
-    const prev = latestTs.get(row.sessionId);
-    if (prev === void 0 || ts >= prev) {
-      latestTs.set(row.sessionId, ts);
-      const task = { jira: row.jira };
-      if (typeof row.epic === "string" && row.epic) task.epic = row.epic;
-      result.set(row.sessionId, task);
-    }
-  }
-  return result;
-}
-function loadSessionAccounts(file = sidecarPath()) {
-  let raw;
-  try {
-    raw = readFileSync(file, "utf8");
-  } catch {
-    return /* @__PURE__ */ new Map();
-  }
-  const latestTs = /* @__PURE__ */ new Map();
-  const result = /* @__PURE__ */ new Map();
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    let row;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (typeof row.sessionId !== "string" || typeof row.account !== "string" || !row.account) {
-      continue;
-    }
-    const ts = typeof row.ts === "string" ? row.ts : "";
-    const prev = latestTs.get(row.sessionId);
-    if (prev === void 0 || ts >= prev) {
-      latestTs.set(row.sessionId, ts);
-      const acct = { account: row.account };
-      if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
-      result.set(row.sessionId, acct);
-    }
-  }
-  return result;
+async function readUsageRecords(since, until, dirs = {}) {
+  const [claude, codex] = await Promise.all([
+    readRecords(since, until, dirs.claudeDir ?? projectsDir()),
+    readCodexRecords(since, until, dirs.codexDir ?? codexSessionsDir())
+  ]);
+  return [...claude, ...codex];
 }
 
 // src/cli.ts
 var DEFAULT_IDLE_GAP_MIN = 15;
 var program2 = new Command();
-program2.name("cc-usage").description("Analyze Claude Code session logs; notional cost + token attribution.").option("-s, --since <iso>", "start of range (ISO date/datetime)").option("-u, --until <iso>", "end of range (ISO date/datetime)").option("-d, --days <n>", "look back N local days (default: 1 = yesterday)").option("--user <id>", "override user identity (default: git email)").option("--idle-gap <min>", "idle gap minutes for active time", String(DEFAULT_IDLE_GAP_MIN)).option("--project <name>", "only include sessions from this project (cwd basename)").option("--no-commit-scan", "do not scan git commits for Jira keys").option("--json", "output JSON instead of a table").option("--upload", "upsert results (prefers ingest URL+token, else Supabase)").option(
+program2.name("cc-usage").description("Analyze Claude Code + Codex session logs; usage and task attribution.").option("-s, --since <iso>", "start of range (ISO date/datetime)").option("-u, --until <iso>", "end of range (ISO date/datetime)").option("-d, --days <n>", "look back N local days (default: 1 = yesterday)").option("--user <id>", "override user identity (default: git email)").option("--idle-gap <min>", "idle gap minutes for active time", String(DEFAULT_IDLE_GAP_MIN)).option("--project <name>", "only include sessions from this project (cwd basename)").option("--no-commit-scan", "do not scan git commits for Jira keys").option("--json", "output JSON instead of a table").option("--upload", "upsert results (prefers ingest URL+token, else Supabase)").option(
   "--ccusage-check",
   "reconcile our notional total against `npx ccusage daily` and print the delta"
 ).action(async (opts) => {
@@ -3607,7 +3821,7 @@ program2.name("cc-usage").description("Analyze Claude Code session logs; notiona
   if (opts.commitScan === false) jira.scanCommits = false;
   const sessionTasks = loadSessionTasks();
   const sessionAccounts = loadSessionAccounts();
-  const records = await readRecords(since, until);
+  const records = await readUsageRecords(since, until);
   const ccusageCost = await fetchCcusageCost(since, until);
   const result = analyze(records, {
     user,
@@ -3664,7 +3878,7 @@ program2.name("cc-usage").description("Analyze Claude Code session logs; notiona
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-IX5JGZMX.js");
+    const { httpUpload } = await import("./upload-EV4UDK7D.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken

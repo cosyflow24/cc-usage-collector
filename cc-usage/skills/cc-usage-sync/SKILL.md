@@ -1,18 +1,18 @@
 ---
 name: cc-usage-sync
-description: Sync this machine's Claude Code AI spend to the team backend. Parses
-  the last day's session logs (tokens per model + notional USD cost, project, git
+description: Sync this machine's Claude Code and Codex usage to the team backend. Parses
+  the last day's session logs (tokens per model + notional USD cost where available, project, git
   branch, Jira task/epic) and uploads them. Also drives per-session task
   attribution — at each session start it asks which Jira epic/task you're on — and
   the /cc-usage:task command records it. Use when the user says "sync my CC usage", "upload
-  usage", "record today's Claude Code spend", "attribute this session", or when
+  usage", "record today's Claude Code or Codex usage", "attribute this session", or when
   a daily usage report is requested. Runs locally; metadata only.
 allowed-tools: [Bash, Read]
 ---
 
 # cc-usage-sync
 
-Push this machine's Claude Code AI spend into the team backend, and attribute
+Push this machine's Claude Code and Codex usage into the team backend, and attribute
 each session to the Jira work it belongs to.
 
 Everything runs through one CLI, `tools/cc-usage` (a dependency-free Node entry
@@ -22,7 +22,8 @@ from `${CLAUDE_PLUGIN_ROOT}/tools/cc-usage` or, after `cc-usage login`, as
 
 ## What it does
 
-Reads `~/.claude/projects/**/*.jsonl`, groups by session, computes per-model
+Reads `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions/**/*.jsonl`, groups by provider + session,
+computes per-model
 token totals + a **notional** USD cost (public API rates via ccusage — you are
 on an enterprise seat and never billed per token), derives the project (from
 cwd) and a Jira task/epic, then upserts into `cc_sessions` and `cc_daily`.
@@ -31,11 +32,9 @@ Only metadata is stored — never prompt or response text.
 ## Three moving parts
 
 1. **Per-session task prompt** (`cc-usage hook prompt-submit`, a `UserPromptSubmit`
-   hook): until the session is attributed, it `decision:block`s **once** with a
-   FIXED English+German message asking you to run `/cc-usage:task`. Injected context
-   (SessionStart/additionalContext) is treated as background and was not acted on
-   reliably, so we block instead. Scoped to the configured project only; slash
-   commands and empty prompts always pass; silent once recorded or skipped.
+   hook): until the session is attributed, it adds a non-blocking AskUserQuestion
+   instruction. Scoped to the configured project only; slash commands and empty
+   prompts always pass; silent once recorded or skipped.
    It also does **drift detection**: if the git branch later points at a
    different Jira key than the one recorded, it nudges you once to `/cc-usage:task` switch.
    (`cc-usage hook session-start` is a `SessionStart` hook that maps
@@ -46,14 +45,14 @@ Only metadata is stored — never prompt or response text.
    - `/cc-usage:task KI-758` — record a key (task or epic)
    - `/cc-usage:task KI-758 KI-700` — task then epic
    - `/cc-usage:task none` — mark this session not tracked
-   Appends `{schemaVersion: 1, sessionId, jira, epic?, cwd, ts}` to
+   Appends `{schemaVersion: 1, provider, sessionId, jira, epic?, cwd, ts}` to
    `~/.claude/cc-usage/tasks.jsonl`.
    The collector validates only key syntax. It never reads, creates, edits, or
    authenticates to Jira. If an epic is already known, pass it explicitly as the
    second key; backend enrichment can add metadata later.
 3. **SessionEnd sync** (`cc-usage hook session-end` → `cc-usage sync`): runs
    `cc-usage --days 1 --upload` (scoped via `--project` when configured) when a
-   session ends. Idempotent on `(user_id, session_id)` / `(user_id, day)`.
+   session ends. Idempotent on `(user_id, provider, session_id)` / `(user_id, day)`.
 
 Auto-capture (part of `hook session-start`) also best-effort resolves a key from
 `CC_JIRA` env → `<cwd>/.ccjira` file → git branch, as a fallback when you don't

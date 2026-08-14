@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import type { UsageProvider } from "./types.ts";
 
 /**
  * In-flow task declarations captured during sessions (by the /task command and
@@ -20,6 +21,10 @@ export interface SessionTask {
   epic?: string;
 }
 
+export function sessionTaskKey(provider: UsageProvider, sessionId: string): string {
+  return `${provider}:${sessionId}`;
+}
+
 /** Map sessionId → declared { jira, epic? } (latest ts per session wins). */
 export function loadSessionTasks(file = sidecarPath()): Map<string, SessionTask> {
   let raw: string;
@@ -32,20 +37,22 @@ export function loadSessionTasks(file = sidecarPath()): Map<string, SessionTask>
   const result = new Map<string, SessionTask>();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let row: { sessionId?: unknown; jira?: unknown; epic?: unknown; ts?: unknown };
+    let row: { provider?: unknown; sessionId?: unknown; jira?: unknown; epic?: unknown; ts?: unknown };
     try {
       row = JSON.parse(line);
     } catch {
       continue;
     }
     if (typeof row.sessionId !== "string" || typeof row.jira !== "string" || !row.jira) continue;
+    const provider: UsageProvider = row.provider === "codex" ? "codex" : "claude";
+    const composite = sessionTaskKey(provider, row.sessionId);
     const ts = typeof row.ts === "string" ? row.ts : "";
-    const prev = latestTs.get(row.sessionId);
+    const prev = latestTs.get(composite);
     if (prev === undefined || ts >= prev) {
-      latestTs.set(row.sessionId, ts);
+      latestTs.set(composite, ts);
       const task: SessionTask = { jira: row.jira };
       if (typeof row.epic === "string" && row.epic) task.epic = row.epic;
-      result.set(row.sessionId, task);
+      result.set(composite, task);
     }
   }
   return result;
@@ -76,7 +83,7 @@ export function loadSessionAccounts(file = sidecarPath()): Map<string, SessionAc
   const result = new Map<string, SessionAccount>();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let row: { sessionId?: unknown; account?: unknown; plan?: unknown; ts?: unknown };
+    let row: { provider?: unknown; sessionId?: unknown; account?: unknown; plan?: unknown; ts?: unknown };
     try {
       row = JSON.parse(line);
     } catch {
@@ -85,13 +92,15 @@ export function loadSessionAccounts(file = sidecarPath()): Map<string, SessionAc
     if (typeof row.sessionId !== "string" || typeof row.account !== "string" || !row.account) {
       continue;
     }
+    const provider: UsageProvider = row.provider === "codex" ? "codex" : "claude";
+    const composite = sessionTaskKey(provider, row.sessionId);
     const ts = typeof row.ts === "string" ? row.ts : "";
-    const prev = latestTs.get(row.sessionId);
+    const prev = latestTs.get(composite);
     if (prev === undefined || ts >= prev) {
-      latestTs.set(row.sessionId, ts);
+      latestTs.set(composite, ts);
       const acct: SessionAccount = { account: row.account };
       if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
-      result.set(row.sessionId, acct);
+      result.set(composite, acct);
     }
   }
   return result;

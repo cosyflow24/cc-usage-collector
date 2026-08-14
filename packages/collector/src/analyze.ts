@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CcusageSessionCost } from "./ccusage.ts";
 import { type JiraConfig, defaultJiraConfig, resolveJiraKey } from "./jira.ts";
 import { costForModelUsage } from "./pricing.ts";
-import type { SessionAccount, SessionTask } from "./sidecar.ts";
+import { sessionTaskKey, type SessionAccount, type SessionTask } from "./sidecar.ts";
 import type {
   AnalysisResult,
   DailySummary,
@@ -100,15 +100,16 @@ function activeMs(sortedRecs: UsageRecord[]): number {
   const open = new Map<string, number>();
   for (let i = 0; i < sortedRecs.length; i++) {
     const r = sortedRecs[i]!;
-    if (r.kind === "tool_use") open.set(r.sessionId, (open.get(r.sessionId) ?? 0) + 1);
-    else if (r.kind === "tool_result" && (open.get(r.sessionId) ?? 0) > 0)
-      open.set(r.sessionId, (open.get(r.sessionId) ?? 0) - 1);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    if (r.kind === "tool_use") open.set(key, (open.get(key) ?? 0) + 1);
+    else if (r.kind === "tool_result" && (open.get(key) ?? 0) > 0)
+      open.set(key, (open.get(key) ?? 0) - 1);
 
     const next = sortedRecs[i + 1];
     if (!next) break;
     const delta = next.timestamp.getTime() - r.timestamp.getTime();
     if (delta <= 0) continue;
-    if ((open.get(r.sessionId) ?? 0) > 0) {
+    if ((open.get(key) ?? 0) > 0) {
       ms += Math.min(delta, AGENT_RUN_MAX_MS); // a tool is running → count the wait fully
     } else if (delta <= T_SESSION_MS) {
       ms += Math.min(delta, T_THINK_MS); // prompt-prep proxy (interim, until §5 calib)
@@ -135,6 +136,8 @@ function buildSession(
   // these same records by day, so an in-place sort would be a hidden side effect).
   recs = [...recs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const start = recs[0]!.timestamp;
+  const provider = recs[0]!.provider;
+  const composite = sessionTaskKey(provider, sessionId);
   // `end` is used ONLY for the in-window git-commit Jira scan below — never
   // uploaded. The exact span never leaves the machine.
   const end = recs[recs.length - 1]!.timestamp;
@@ -152,7 +155,7 @@ function buildSession(
   const project = cwd ? path.basename(cwd) : null;
 
   // Explicit declaration (sidecar) wins over any heuristic.
-  const declared = opts.sessionTasks?.get(sessionId);
+  const declared = opts.sessionTasks?.get(composite) ?? opts.sessionTasks?.get(sessionId);
   const jiraKey =
     declared?.jira ??
     resolveJiraKey({ branch, cwd, project }, start, end, opts.jira ?? defaultJiraConfig);
@@ -175,7 +178,7 @@ function buildSession(
   // Numbers: prefer ccusage's authoritative (deduped) tokens + cost; our parser
   // only contributes attribution. Fall back to our own deduped counts +
   // pricing.ts only when ccusage has no row for this session.
-  const cc = opts.ccusageCost?.get(sessionId);
+  const cc = provider === "claude" ? opts.ccusageCost?.get(sessionId) : undefined;
   let modelUsage: ModelUsage[];
   let sessionTotals: TokenTotals;
   let notionalCostUsd: number;
@@ -185,17 +188,21 @@ function buildSession(
     notionalCostUsd = cc.totalCostUsd;
   } else {
     modelUsage = [...perModel.values()];
-    for (const mu of modelUsage) mu.costUsd = costForModelUsage(mu);
+    for (const mu of modelUsage) mu.costUsd = costForModelUsage(mu, provider);
     sessionTotals = totals;
     notionalCostUsd = modelUsage.reduce((a, m) => a + m.costUsd, 0);
   }
 
   return {
+    provider,
     sessionId,
+    parentSessionId: recs[0]!.parentSessionId,
+    rootSessionId: recs[0]!.rootSessionId,
+    agentRole: recs[0]!.agentRole,
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: opts.sessionAccounts?.get(sessionId)?.account ?? opts.user,
+    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.user,
     project,
     gitBranch: branch,
     jiraKey,
@@ -274,9 +281,10 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     : records;
   const bySession = new Map<string, UsageRecord[]>();
   for (const r of filtered) {
-    (bySession.get(r.sessionId) ?? bySession.set(r.sessionId, []).get(r.sessionId)!).push(r);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    (bySession.get(key) ?? bySession.set(key, []).get(key)!).push(r);
   }
-  const built = [...bySession.entries()].map(([id, recs]) => buildSession(id, recs, opts));
+  const built = [...bySession.values()].map((recs) => buildSession(recs[0]!.sessionId, recs, opts));
 
   // Active time (KI-759), derived so per-session and daily rollups AGREE.
   // Bucket every record by calendar DAY (and, within the day, by session):
@@ -293,7 +301,8 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     const d = localDay(r.timestamp);
     (recsByDay.get(d) ?? recsByDay.set(d, []).get(d)!).push(r);
     const sm = daySessions.get(d) ?? daySessions.set(d, new Map()).get(d)!;
-    (sm.get(r.sessionId) ?? sm.set(r.sessionId, []).get(r.sessionId)!).push(r);
+    const key = sessionTaskKey(r.provider, r.sessionId);
+    (sm.get(key) ?? sm.set(key, []).get(key)!).push(r);
   }
   const sessionActiveHours = new Map<string, number>();
   for (const [day, recs] of recsByDay) {
@@ -320,7 +329,10 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   // deliberately coarse (toActiveHours); the per-session split is an estimate of
   // it, so Σ sessions of a day == that day's daily active exactly.
   const sessions = built
-    .map((s) => ({ ...s, activeTimeHours: sessionActiveHours.get(s.sessionId) ?? 0 }))
+    .map((s) => ({
+      ...s,
+      activeTimeHours: sessionActiveHours.get(sessionTaskKey(s.provider, s.sessionId)) ?? 0,
+    }))
     .sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
 
   const totals = emptyTotals();

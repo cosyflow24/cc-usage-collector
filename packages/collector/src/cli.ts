@@ -9,7 +9,7 @@ import {
   resolveUser,
 } from "./config.ts";
 import { formatTable } from "./format.ts";
-import { readRecords } from "./parser.ts";
+import { readUsageRecords } from "./parser.ts";
 import { loadSessionAccounts, loadSessionTasks } from "./sidecar.ts";
 
 const DEFAULT_IDLE_GAP_MIN = 15;
@@ -17,7 +17,7 @@ const DEFAULT_IDLE_GAP_MIN = 15;
 const program = new Command();
 program
   .name("cc-usage")
-  .description("Analyze Claude Code session logs; notional cost + token attribution.")
+  .description("Analyze Claude Code + Codex session logs; usage and task attribution.")
   .option("-s, --since <iso>", "start of range (ISO date/datetime)")
   .option("-u, --until <iso>", "end of range (ISO date/datetime)")
   .option("-d, --days <n>", "look back N local days (default: 1 = yesterday)")
@@ -44,7 +44,7 @@ program
 
     const sessionTasks = loadSessionTasks();
     const sessionAccounts = loadSessionAccounts();
-    const records = await readRecords(since, until);
+    const records = await readUsageRecords(since, until);
 
     // ccusage is the cost ORACLE (higher fidelity), but optional: null on any
     // failure → pricing.ts is the self-sufficient primary path.

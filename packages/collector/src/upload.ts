@@ -37,7 +37,11 @@ function wireModelUsage(m: ModelUsage): ModelUsage {
 
 function wireSession(s: SessionSummary): SessionSummary {
   return {
+    provider: s.provider,
     sessionId: s.sessionId,
+    parentSessionId: s.parentSessionId,
+    rootSessionId: s.rootSessionId,
+    agentRole: s.agentRole,
     user: s.user,
     project: s.project,
     gitBranch: s.gitBranch,

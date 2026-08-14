@@ -1,4 +1,4 @@
-// The three Claude Code hook handlers. Since 2026-08-12 every interactive
+// Shared Claude Code/Codex hook handlers. Since 2026-08-12 every interactive
 // nudge (first attribution, drift, stale, backstop) uses ONE interaction
 // contract: non-blocking additionalContext instructing the agent to call
 // AskUserQuestion with options that map to exactly one deterministic CLI
@@ -47,17 +47,31 @@ function nonInteractive() {
     || process.env.CLAUDE_CODE_NONINTERACTIVE);
 }
 
+function currentProvider(payload) {
+  const payloadSid = payload.session_id || payload.sessionId || "";
+  const codexSid = process.env.CODEX_THREAD_ID || "";
+  // A Codex parent process can run tests/tools that simulate a Claude hook.
+  // Treat it as Codex only when the hook id is absent or matches this thread.
+  return codexSid && (!payloadSid || payloadSid === codexSid) ? "codex" : "claude";
+}
+
+function hookSessionId(payload, provider) {
+  if (provider === "codex" && process.env.CODEX_THREAD_ID) return process.env.CODEX_THREAD_ID;
+  return payload.session_id || payload.sessionId || "";
+}
+
 // ---- SessionStart: map cwd->sid, auto-capture, maintenance, task hint --------
 export function sessionStart(payload) {
-  const sid = payload.session_id || payload.sessionId || "";
+  const provider = currentProvider(payload);
+  const sid = hookSessionId(payload, provider);
   const cwd = payload.cwd || process.cwd();
 
-  if (sid) mapCwd(cwd, sid);
-  autoCapture(sid, cwd);
-  try { captureAccount(sid, cwd); } catch { /* ignore */ }
+  if (sid) mapCwd(cwd, sid, provider);
+  autoCapture(sid, cwd, provider);
+  try { captureAccount(sid, cwd, provider); } catch { /* ignore */ }
   maintenance();
 
-  if (!sid || isDeclared(sid)) return null; // resumed/attributed → no nag
+  if (!sid || isDeclared(sid, provider)) return null; // resumed/attributed → no nag
 
   // Tier 1 — sticky: this folder was recently and unambiguously bound to one
   // issue, so continue it silently. No prompt, no typing. Drift/stale nudges in
@@ -66,7 +80,7 @@ export function sessionStart(payload) {
   if (sk) {
     try {
       appendRow({
-        schemaVersion: 1, sessionId: sid, jira: sk, cwd,
+        schemaVersion: 1, provider, sessionId: sid, jira: sk, cwd,
         ts: new Date().toISOString(), src: "sticky",
       });
     } catch { /* ignore */ }
@@ -84,7 +98,7 @@ export function sessionStart(payload) {
   if (bk && !keys.includes(bk)) keys.push(bk);
   const optionsList = keys.length ? keys.join(", ") : "(none on record)";
   const launcher = `node ${JSON.stringify(resolverPath)} task`;
-  const additionalContext = "[cc-usage] This Claude Code session is not yet attributed to a Jira "
+  const additionalContext = `[cc-usage] This ${provider} session is not yet attributed to a Jira `
     + "issue. At the START of your first reply, call the AskUserQuestion tool (header \"cc-usage\") "
     + "asking which Jira issue this session is for, in the user's language. Offer these options as "
     + `clickable choices: the recent/branch keys [${optionsList}], plus "None — don't track". `
@@ -96,7 +110,7 @@ export function sessionStart(payload) {
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } };
 }
 
-function autoCapture(sid, cwd) {
+function autoCapture(sid, cwd, provider = "claude") {
   const KEY = /[A-Z][A-Z0-9]+-\d+/;
   let jira = (process.env.CC_JIRA || "").toUpperCase().match(KEY)?.[0] || "";
   if (!jira) {
@@ -104,7 +118,7 @@ function autoCapture(sid, cwd) {
   }
   if (!jira) jira = branchKey(cwd) || "";
   if (sid && jira) {
-    const row = { schemaVersion: 1, sessionId: sid, jira, cwd, ts: new Date().toISOString(), src: "hook" };
+    const row = { schemaVersion: 1, provider, sessionId: sid, jira, cwd, ts: new Date().toISOString(), src: "hook" };
     const epic = (process.env.CC_EPIC || "").toUpperCase().match(KEY)?.[0] || "";
     if (epic) row.epic = epic;
     try { appendRow(row); } catch { /* ignore */ }
@@ -113,7 +127,8 @@ function autoCapture(sid, cwd) {
 
 // ---- UserPromptSubmit: gate first prompt, drift/stale nudges ----------------
 export function promptSubmit(payload) {
-  const sid = payload.session_id || payload.sessionId || "";
+  const provider = currentProvider(payload);
+  const sid = hookSessionId(payload, provider);
   const cwd = payload.cwd || process.cwd();
   const prompt = (payload.prompt || payload.user_prompt || "").trim();
 
@@ -121,12 +136,12 @@ export function promptSubmit(payload) {
   const proj = process.env.CC_USAGE_PROJECT || readConfig().project;
   if (proj && basename(cwd) !== proj) return null;
 
-  if (sid) mapCwd(cwd, sid);
+  if (sid) mapCwd(cwd, sid, provider);
   if (!prompt || prompt.startsWith("/")) return null; // slash + empty pass
   if (!sid) return null;
-  if (hasMarker(sid)) return null; // /cc-usage:task none → quiet
+  if (hasMarker(`${provider}-${sid}`)) return null; // task none → quiet
 
-  const declared = declaredRow(sid);
+  const declared = declaredRow(sid, provider);
   if (declared) {
     if (nonInteractive()) return null; // headless: never nudge
     const launcher = `node ${JSON.stringify(resolverPath)} task`;
@@ -174,8 +189,8 @@ export function promptSubmit(payload) {
   let seen = 0;
   while (seen < GRACE && hasMarker(`pc${seen + 1}-${sid}`)) seen += 1;
   if (seen < GRACE) { writeMarker(`pc${seen + 1}-${sid}`); return null; }
-  if (hasMarker(sid)) return null; // already nagged once
-  writeMarker(sid);
+  if (hasMarker(`${provider}-${sid}`)) return null; // already nagged once
+  writeMarker(`${provider}-${sid}`);
   const recent = recentForCwd(cwd);
   const bk = branchKey(cwd);
   const sugg = recent.map((r) => `${r.key} (${ago(r.ts)})`);

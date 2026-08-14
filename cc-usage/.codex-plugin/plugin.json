@@ -1,0 +1,28 @@
+{
+  "name": "cc-usage",
+  "version": "0.6.0",
+  "description": "Unified Claude Code and Codex usage tracking with local-only task and session context recovery.",
+  "author": {
+    "name": "cosyflow24",
+    "url": "https://github.com/cosyflow24"
+  },
+  "homepage": "https://github.com/cosyflow24/cc-usage-collector",
+  "repository": "https://github.com/cosyflow24/cc-usage-collector",
+  "keywords": ["usage", "analytics", "codex", "claude", "jira", "context"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CC Usage",
+    "shortDescription": "Unified Claude and Codex usage",
+    "longDescription": "Tracks metadata-only usage across Claude Code and Codex, binds sessions to Jira tasks, and restores local session context without uploading conversations.",
+    "developerName": "cosyflow24",
+    "category": "Productivity",
+    "capabilities": ["Read", "Interactive"],
+    "websiteURL": "https://github.com/cosyflow24/cc-usage-collector",
+    "defaultPrompt": [
+      "Show sessions for BI-220.",
+      "Load the context for this session ID.",
+      "Continue the latest session for this task."
+    ],
+    "brandColor": "#6D5CE7"
+  }
+}

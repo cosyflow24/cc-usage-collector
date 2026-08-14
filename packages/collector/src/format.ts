@@ -16,6 +16,9 @@ export function formatTable(r: AnalysisResult): string {
   lines.push(`User: ${r.user}`);
   lines.push(`Range: ${r.range.since} → ${r.range.until}`);
   lines.push("Cost is NOTIONAL (public API rates) · employees are not billed per token.");
+  if (r.sessions.some((s) => s.provider === "codex")) {
+    lines.push("Codex subscription models without a published local rate show $0, never an invented estimate.");
+  }
   lines.push("");
 
   lines.push("By model:");
@@ -44,6 +47,7 @@ export function formatTable(r: AnalysisResult): string {
     const tag = s.epicKey ?? s.jiraKey ?? s.gitBranch ?? "-";
     lines.push(
       `  ${s.day}  ` +
+        `${s.provider.padEnd(7)}  ` +
         `${(s.project ?? "-").padEnd(22).slice(0, 22)}  ` +
         `${tag.padEnd(16).slice(0, 16)}  ` +
         `${fmtCost(s.notionalCostUsd).padStart(9)}  ` +

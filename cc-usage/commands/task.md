@@ -1,5 +1,5 @@
 ---
-description: Attribute the current Claude Code session to an existing Jira key (cc-usage metadata only)
+description: Attribute the current Claude Code or Codex session to an existing Jira key (cc-usage metadata only)
 allowed-tools: Bash(sh:*)
 ---
 

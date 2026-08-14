@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { EventKind, UsageRecord } from "./types.ts";
+import { codexSessionsDir, readCodexRecords } from "./codex-parser.ts";
 
 /**
  * Classify an event from its JSONL `type` + content-block shapes. Content TEXT is
@@ -81,7 +82,11 @@ function parseLine(line: string): UsageRecord | null {
   const msgId = typeof row?.message?.id === "string" ? row.message.id : null;
   const reqId = typeof row?.requestId === "string" ? row.requestId : "";
   return {
+    provider: "claude",
     sessionId,
+    parentSessionId: null,
+    rootSessionId: sessionId,
+    agentRole: null,
     timestamp: date,
     model: typeof row?.message?.model === "string" ? row.message.model : null,
     cwd: typeof row?.cwd === "string" ? row.cwd : null,
@@ -126,4 +131,17 @@ export async function readRecords(
     }
   }
   return records;
+}
+
+/** Read both supported local providers. Claude remains enabled by default. */
+export async function readUsageRecords(
+  since: Date,
+  until: Date,
+  dirs: { claudeDir?: string; codexDir?: string } = {},
+): Promise<UsageRecord[]> {
+  const [claude, codex] = await Promise.all([
+    readRecords(since, until, dirs.claudeDir ?? projectsDir()),
+    readCodexRecords(since, until, dirs.codexDir ?? codexSessionsDir()),
+  ]);
+  return [...claude, ...codex];
 }

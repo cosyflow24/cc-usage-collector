@@ -19,6 +19,19 @@ function writeRollout(lines: unknown[]): string {
   return dir;
 }
 
+function writeNamedRollouts(files: Record<string, unknown[]>): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "cc-codex-parser-"));
+  const nested = path.join(dir, "2026", "08", "14");
+  mkdirSync(nested, { recursive: true });
+  for (const [name, lines] of Object.entries(files)) {
+    writeFileSync(
+      path.join(nested, name),
+      `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+    );
+  }
+  return dir;
+}
+
 function row(timestamp: string, type: string, payload: unknown): unknown {
   return { timestamp, type, payload };
 }
@@ -171,4 +184,131 @@ test("readCodexRecords: embedded parent metadata never replaces the rollout iden
       cwd: "/work/child",
     }],
   );
+});
+
+test("readCodexRecords: copied parent history is only a child-token baseline", async () => {
+  const parentMeta = row("2026-08-14T09:00:00Z", "session_meta", {
+    id: "codex-parent",
+    cwd: "/work/app",
+  });
+  const copiedContext = row("2026-08-14T09:00:01Z", "turn_context", {
+    model: "gpt-5.6-sol",
+    cwd: "/work/app",
+  });
+  const copiedPrompt = row("2026-08-14T09:00:02Z", "response_item", {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "parent prompt" }],
+  });
+  const copiedTokens = row("2026-08-14T09:00:03Z", "event_msg", {
+    type: "token_count",
+    info: {
+      total_token_usage: {
+        input_tokens: 100,
+        cached_input_tokens: 40,
+        output_tokens: 10,
+      },
+    },
+  });
+  const copiedAnswer = row("2026-08-14T09:00:04Z", "response_item", {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "parent answer" }],
+  });
+
+  const dir = writeNamedRollouts({
+    "rollout-parent-codex-parent.jsonl": [
+      parentMeta,
+      copiedContext,
+      copiedPrompt,
+      copiedTokens,
+      copiedAnswer,
+      row("2026-08-14T10:00:20Z", "event_msg", {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 160,
+            cached_input_tokens: 60,
+            output_tokens: 18,
+          },
+        },
+      }),
+    ],
+    "rollout-child-codex-child.jsonl": [
+      row("2026-08-14T10:00:00Z", "session_meta", {
+        id: "codex-child",
+        session_id: "codex-root",
+        parent_thread_id: "codex-parent",
+        cwd: "/work/app",
+        agent_role: "worker",
+      }),
+      parentMeta,
+      copiedContext,
+      copiedPrompt,
+      copiedTokens,
+      copiedAnswer,
+      row("2026-08-14T10:00:10Z", "response_item", {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "child prompt" }],
+      }),
+      row("2026-08-14T10:00:11Z", "event_msg", {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 130,
+            cached_input_tokens: 50,
+            output_tokens: 14,
+          },
+        },
+      }),
+    ],
+  });
+
+  const records = await readCodexRecords(SINCE, UNTIL, dir);
+  const child = records.filter((record) => record.sessionId === "codex-child");
+
+  assert.deepEqual(child.map((record) => record.kind), ["prompt", "answer"]);
+  assert.deepEqual(
+    {
+      input: child.reduce((sum, record) => sum + record.inputTokens, 0),
+      cache: child.reduce((sum, record) => sum + record.cacheReadTokens, 0),
+      output: child.reduce((sum, record) => sum + record.outputTokens, 0),
+    },
+    { input: 20, cache: 10, output: 4 },
+  );
+});
+
+test("readCodexRecords: embedded metadata without copied rows keeps child usage", async () => {
+  const dir = writeNamedRollouts({
+    "rollout-parent-codex-parent.jsonl": [
+      row("2026-08-14T09:00:00Z", "session_meta", { id: "codex-parent" }),
+      row("2026-08-14T09:00:01Z", "turn_context", { model: "gpt-5.6-sol" }),
+    ],
+    "rollout-child-codex-child.jsonl": [
+      row("2026-08-14T10:00:00Z", "session_meta", {
+        id: "codex-child",
+        parent_thread_id: "codex-parent",
+        subagent_history_start_ordinal: 10,
+      }),
+      row("2026-08-14T10:00:00Z", "session_meta", { id: "codex-parent" }),
+      row("2026-08-14T10:00:01Z", "turn_context", { model: "gpt-5.6-sol" }),
+      row("2026-08-14T10:00:02Z", "event_msg", {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 12,
+            cached_input_tokens: 2,
+            output_tokens: 3,
+          },
+        },
+      }),
+    ],
+  });
+
+  const records = await readCodexRecords(SINCE, UNTIL, dir);
+  const child = records.filter((record) => record.sessionId === "codex-child");
+  assert.equal(child.reduce((sum, record) => sum + record.inputTokens, 0), 10);
+  assert.equal(child.reduce((sum, record) => sum + record.cacheReadTokens, 0), 2);
+  assert.equal(child.reduce((sum, record) => sum + record.outputTokens, 0), 3);
 });

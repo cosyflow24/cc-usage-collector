@@ -3532,6 +3532,7 @@ import { homedir as homedir2 } from "os";
 import path3 from "path";
 import { createInterface } from "readline";
 var MAX_LINE_LEN = 1e6;
+var FILE_CONCURRENCY = 16;
 function codexSessionsDir() {
   const base = process.env.CODEX_HOME ?? path3.join(homedir2(), ".codex");
   return path3.join(base, "sessions");
@@ -3614,6 +3615,81 @@ function parseMeta(payload) {
     cwd: typeof p.cwd === "string" && p.cwd ? p.cwd : null
   };
 }
+async function* readJsonRows(file) {
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let ordinal = 0;
+  try {
+    for await (const line of lines) {
+      ordinal += 1;
+      if (!line || line.length > MAX_LINE_LEN) continue;
+      try {
+        const value = JSON.parse(line);
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          yield { ordinal, value };
+        }
+      } catch {
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+async function mapConcurrent(values, limit, visit) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await visit(values[index]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, () => worker())
+  );
+  return output;
+}
+async function readRolloutHeader(file) {
+  const rows = readJsonRows(file);
+  const first = await rows.next();
+  const second = await rows.next();
+  await rows.return(void 0);
+  const firstValue = first.done ? null : first.value.value;
+  const secondValue = second.done ? null : second.value.value;
+  const firstPayload = firstValue?.type === "session_meta" && firstValue.payload && typeof firstValue.payload === "object" ? firstValue.payload : null;
+  const ownMeta = firstPayload ? parseMeta(firstPayload) : null;
+  const embeddedMeta = secondValue?.type === "session_meta" ? parseMeta(secondValue.payload) : null;
+  return {
+    file,
+    sessionId: ownMeta?.sessionId ?? null,
+    embeddedParentId: embeddedMeta?.sessionId ?? null,
+    hasExplicitHistoryBoundary: firstPayload !== null && "subagent_history_start_ordinal" in firstPayload
+  };
+}
+function historySignature(row) {
+  return JSON.stringify({ type: row.type, payload: row.payload });
+}
+async function embeddedHistoryEndOrdinal(childFile, parentFile) {
+  const childRows = readJsonRows(childFile);
+  const parentRows = readJsonRows(parentFile);
+  try {
+    await childRows.next();
+    await childRows.next();
+    await parentRows.next();
+    let lastMatchedChildOrdinal = 0;
+    while (true) {
+      const [child, parent] = await Promise.all([childRows.next(), parentRows.next()]);
+      if (child.done || parent.done) break;
+      if (historySignature(child.value.value) !== historySignature(parent.value.value)) break;
+      lastMatchedChildOrdinal = child.value.ordinal;
+    }
+    return lastMatchedChildOrdinal;
+  } finally {
+    await Promise.all([childRows.return(void 0), parentRows.return(void 0)]);
+  }
+}
 function makeRecord(meta, timestamp, model, cwd, kind, tokens, dedupeKey) {
   return {
     provider: "codex",
@@ -3630,24 +3706,13 @@ function makeRecord(meta, timestamp, model, cwd, kind, tokens, dedupeKey) {
     ...tokens
   };
 }
-async function parseFile(file, since, until) {
+async function parseFile(file, since, until, skipThroughOrdinal = 0) {
   const records = [];
-  const input = createReadStream(file, { encoding: "utf8" });
-  const lines = createInterface({ input, crlfDelay: Infinity });
   let meta = null;
   let model = null;
   let cwd = null;
   let previous = null;
-  let ordinal = 0;
-  for await (const line of lines) {
-    ordinal += 1;
-    if (!line || line.length > MAX_LINE_LEN) continue;
-    let row;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for await (const { ordinal, value: row } of readJsonRows(file)) {
     if (row.type === "session_meta") {
       if (!meta) meta = parseMeta(row.payload);
       continue;
@@ -3664,7 +3729,7 @@ async function parseFile(file, since, until) {
     const inRange = timestamp >= since && timestamp <= until;
     if (row.type === "response_item") {
       const kind = responseKind(row.payload);
-      if (kind && inRange) {
+      if (kind && inRange && ordinal > skipThroughOrdinal) {
         records.push(makeRecord(meta, timestamp, model, cwd, kind, {
           inputTokens: 0,
           outputTokens: 0,
@@ -3683,7 +3748,7 @@ async function parseFile(file, since, until) {
     if (!snapshot) continue;
     const delta = deltaSnapshot(snapshot, previous) ?? snapshot;
     previous = snapshot;
-    if (!inRange || Object.values(delta).every((v) => v === 0)) continue;
+    if (ordinal <= skipThroughOrdinal || !inRange || Object.values(delta).every((v) => v === 0)) continue;
     records.push(makeRecord(
       meta,
       timestamp,
@@ -3698,7 +3763,19 @@ async function parseFile(file, since, until) {
 }
 async function readCodexRecords(since, until, dir = codexSessionsDir()) {
   const files = await listLogFiles(dir);
-  const nested = await Promise.all(files.map((file) => parseFile(file, since, until)));
+  const headers = await mapConcurrent(files, FILE_CONCURRENCY, readRolloutHeader);
+  const bySessionId = new Map(
+    headers.flatMap((header) => header.sessionId ? [[header.sessionId, header.file]] : [])
+  );
+  const historyEnds = /* @__PURE__ */ new Map();
+  await mapConcurrent(headers, FILE_CONCURRENCY, async (header) => {
+    if (header.hasExplicitHistoryBoundary || !header.embeddedParentId) return;
+    const parentFile = bySessionId.get(header.embeddedParentId);
+    if (!parentFile || parentFile === header.file) return;
+    const historyEnd = await embeddedHistoryEndOrdinal(header.file, parentFile);
+    if (historyEnd > 0) historyEnds.set(header.file, historyEnd);
+  });
+  const nested = await mapConcurrent(files, FILE_CONCURRENCY, (file) => parseFile(file, since, until, historyEnds.get(file) ?? 0));
   return nested.flat();
 }
 

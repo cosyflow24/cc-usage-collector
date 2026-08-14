@@ -14,6 +14,8 @@ import type {
 
 export interface AnalyzeOptions {
   user: string;
+  /** Provider-specific authenticated identities; prevents cross-provider attribution. */
+  providerUsers?: Partial<Record<"claude" | "codex", string>>;
   since: Date;
   until: Date;
   /** Gaps longer than this (ms) are treated as idle and trimmed from activeMs. */
@@ -42,8 +44,14 @@ function emptyTotals(): TokenTotals {
   };
 }
 
-function emptyModelUsage(model: string): ModelUsage {
-  return { model, ...emptyTotals(), costUsd: 0 };
+function emptyModelUsage(model: string, provider: "claude" | "codex"): ModelUsage {
+  return {
+    provider,
+    model,
+    ...emptyTotals(),
+    costUsd: 0,
+    costAvailable: provider === "claude",
+  };
 }
 
 function addTokens(t: TokenTotals, r: UsageRecord): void {
@@ -169,7 +177,7 @@ function buildSession(
     if (!r.model) continue;
     let mu = perModel.get(r.model);
     if (!mu) {
-      mu = emptyModelUsage(r.model);
+      mu = emptyModelUsage(r.model, provider);
       perModel.set(r.model, mu);
     }
     addTokens(mu, r);
@@ -202,7 +210,9 @@ function buildSession(
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.user,
+    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account
+      ?? opts.providerUsers?.[provider]
+      ?? opts.user,
     project,
     gitBranch: branch,
     jiraKey,
@@ -214,6 +224,7 @@ function buildSession(
     modelUsage,
     totals: sessionTotals,
     notionalCostUsd,
+    costAvailable: provider === "claude",
     // Placeholder — analyze() overwrites this with the session's DAY-BOUNDED,
     // apportioned share (see apportionSessionActive). Summing whole-session
     // lifespans double-counts multi-day sessions vs the daily rollup.
@@ -226,10 +237,11 @@ function rollupModels(sessions: SessionSummary[]): ModelUsage[] {
   const map = new Map<string, ModelUsage>();
   for (const s of sessions) {
     for (const mu of s.modelUsage) {
-      let agg = map.get(mu.model);
+      const key = `${mu.provider}\u0000${mu.model}`;
+      let agg = map.get(key);
       if (!agg) {
-        agg = emptyModelUsage(mu.model);
-        map.set(mu.model, agg);
+        agg = emptyModelUsage(mu.model, mu.provider);
+        map.set(key, agg);
       }
       mergeTotals(agg, mu);
       agg.costUsd += mu.costUsd;
@@ -269,6 +281,7 @@ function buildDaily(sessions: SessionSummary[]): DailySummary[] {
         modelUsage: rollupModels(ses),
         totals,
         notionalCostUsd,
+        hasUnpricedCodex: ses.some((session) => !session.costAvailable),
         activeTimeHours,
       };
     })
@@ -350,5 +363,6 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     modelUsage: rollupModels(sessions),
     totals,
     notionalCostUsd,
+    hasUnpricedCodex: sessions.some((session) => !session.costAvailable),
   };
 }

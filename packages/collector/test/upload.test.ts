@@ -26,9 +26,16 @@ const session: SessionSummary = {
   day: "2026-07-13",
   messageCount: 3,
   models: ["claude-sonnet-4"],
-  modelUsage: [{ model: "claude-sonnet-4", ...totals, costUsd: 0.1 }],
+  modelUsage: [{
+    provider: "claude",
+    model: "claude-sonnet-4",
+    ...totals,
+    costUsd: 0.1,
+    costAvailable: true,
+  }],
   totals,
   notionalCostUsd: 0.1,
+  costAvailable: true,
   activeTimeHours: 0.5,
 };
 
@@ -45,15 +52,24 @@ test("httpUpload: wire payload is an explicit projection — fields outside the 
         day: "2026-07-13",
         user: "dev@nnb24.de",
         sessions: 1,
-        modelUsage: [{ model: "claude-sonnet-4", ...totals, costUsd: 0.1, secret: "x" } as never],
+        modelUsage: [{
+          provider: "claude",
+          model: "claude-sonnet-4",
+          ...totals,
+          costUsd: 0.1,
+          costAvailable: true,
+          secret: "x",
+        } as never],
         totals,
         notionalCostUsd: 0.1,
+        hasUnpricedCodex: false,
         activeTimeHours: 0.5,
       },
     ],
     modelUsage: [],
     totals,
     notionalCostUsd: 0.1,
+    hasUnpricedCodex: false,
   };
 
   const bodies: string[] = [];

@@ -92,3 +92,21 @@ test("headless sessions get no nudges at all", () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("legacy Claude none markers remain silent after the provider upgrade", () => {
+  const base = mkdtempSync(join(tmpdir(), "ccu-hooks-"));
+  try {
+    const asked = join(base, "claude", "cc-usage", "asked");
+    mkdirSync(asked, { recursive: true });
+    writeFileSync(join(asked, "legacy-sid"), new Date().toISOString());
+    for (let i = 0; i < 4; i += 1) {
+      const out = runPromptSubmit(
+        base,
+        { session_id: "legacy-sid", cwd: base, prompt: `hello ${i}` },
+      );
+      assert.equal(out, null);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

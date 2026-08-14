@@ -59,15 +59,15 @@ export function loadSessionTasks(file = sidecarPath()): Map<string, SessionTask>
 }
 
 export interface SessionAccount {
-  /** Claude OAuth account email signed in during the session. */
+  /** Matching provider account email signed in during the session. */
   account: string;
   /** organizationType, e.g. "claude_max" | "enterprise". */
   plan?: string;
 }
 
 /**
- * Map sessionId → the Claude account in use DURING that session (latest ts per
- * session wins). The SessionStart hook records this from ~/.claude.json, so each
+ * Map sessionId → the provider account in use DURING that session (latest ts per
+ * session wins). The SessionStart hook records it from Claude/Codex auth, so each
  * session is attributed to the account actually signed in then — not whatever
  * account happens to be active when the collector later runs. Unlike
  * loadSessionTasks, account-only rows (no jira) are honored.

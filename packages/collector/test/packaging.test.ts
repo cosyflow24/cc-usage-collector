@@ -34,4 +34,9 @@ test("SessionEnd sync runs asynchronously within the Codex three-second cap", ()
   const handler = config.hooks?.SessionEnd?.[0]?.hooks?.[0];
   assert.equal(handler?.async, true);
   assert.equal(handler?.timeout, 3);
+  const entry = readFileSync(
+    new URL("../../../cc-usage/tools/cc-usage.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(entry, /runCollectorDetached/);
 });

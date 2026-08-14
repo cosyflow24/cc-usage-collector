@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   STATE_DIR, DEFAULT_INGEST_URL, jsonConfigFile, readConfig, writeConfig, readOauthEmail,
+  readCodexOauthEmail,
   resolverPath, registryFile,
 } from "./core/config.mjs";
 import {
@@ -18,7 +19,7 @@ import {
   installLauncher, launcherPath, ownsLauncher,
 } from "./core/launcher.mjs";
 import {
-  loadCredentials, runCollector, bundlePath,
+  loadCredentials, runCollector, runCollectorDetached, bundlePath,
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
@@ -108,9 +109,15 @@ async function login(args) {
   } else if (check.enrolledEmails.length) {
     out(`Token verified — uploads as: ${check.enrolledEmails.join(", ")}`);
   }
-  const email = cfg.email || readOauthEmail() || "default"; // stable, non-empty keyring account
+  const email = cfg.email || check.enrolledEmails[0] || readOauthEmail() || readCodexOauthEmail() || "default";
   const where = storeToken(email, token);
-  writeConfig({ ingestUrl, email, project: cfg.project });
+  writeConfig({
+    ingestUrl,
+    email,
+    project: cfg.project,
+    user: cfg.user,
+    workDomain: cfg.workDomain,
+  });
   installLauncher();
   out(`\ncc-usage: token stored in ${where}. Usage now uploads on session end and daily.`);
   out("Run  cc-usage doctor  to verify, or  cc-usage sync  for an immediate upload.");
@@ -312,7 +319,7 @@ function runHook(sub, payload) {
   if (sub === "session-start") { const o = sessionStart(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "prompt-submit") { const o = promptSubmit(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "autoupdate-worker") { runUpdateWorker(); return; }
-  if (sub === "session-end") { runCollector(syncArgs("1", false), { quiet: true }); }
+  if (sub === "session-end") { runCollectorDetached(syncArgs("1", false)); }
 }
 
 function help(topic) {

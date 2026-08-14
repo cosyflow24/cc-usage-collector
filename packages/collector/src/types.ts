@@ -46,9 +46,12 @@ export interface TokenTotals {
 
 /** Per-model token rollup plus its notional USD cost (what tokens WOULD cost). */
 export interface ModelUsage extends TokenTotals {
+  provider: UsageProvider;
   model: string;
   /** Notional USD at public API rates. Employees are not billed per token. */
   costUsd: number;
+  /** False for Codex subscription usage with no authoritative local USD rate. */
+  costAvailable: boolean;
 }
 
 export interface SessionSummary {
@@ -75,6 +78,7 @@ export interface SessionSummary {
   totals: TokenTotals;
   /** Notional USD across all models. Labelled "notional · not billed" in UI. */
   notionalCostUsd: number;
+  costAvailable: boolean;
   /**
    * Estimated active hours for this session (KI-759), rounded coarse (quarter
    * hour). A PLANNING signal for effort estimation — explicitly NOT work-time
@@ -91,6 +95,7 @@ export interface DailySummary {
   modelUsage: ModelUsage[];
   totals: TokenTotals;
   notionalCostUsd: number;
+  hasUnpricedCodex: boolean;
   /**
    * Active hours for the whole day (KI-759), computed from ALL of the user's
    * events that day merged into one timeline — NOT a sum of per-session hours,
@@ -107,4 +112,5 @@ export interface AnalysisResult {
   modelUsage: ModelUsage[];
   totals: TokenTotals;
   notionalCostUsd: number;
+  hasUnpricedCodex: boolean;
 }

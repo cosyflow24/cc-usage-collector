@@ -50,10 +50,14 @@ The same repository is also a Codex marketplace:
 ```bash
 codex plugin marketplace add cosyflow24/cc-usage-collector
 codex plugin add cc-usage@cc-usage
-cc-usage login
 ```
 
-Start a new Codex thread after installation. The shared hooks bind
+Start a new Codex thread, ask **“Set up CC Usage”**, then open `/hooks` and trust
+the current CC Usage hooks. The setup skill installs the stable launcher before
+it asks you to run `cc-usage login` in a normal terminal, so a fresh plugin
+install never depends on a command that is not on PATH yet.
+
+The shared hooks bind
 `CODEX_THREAD_ID` directly, collect `~/.codex/sessions/**/*.jsonl`, and keep the
 same metadata-only upload boundary.
 
@@ -76,8 +80,9 @@ The installer is idempotent and will:
 4. Wire up the Claude Code hooks and the `/cc-usage:task` + `/burn` commands.
 5. Do a dry run (no upload) to prove parsing works.
 
-Requirements: signed into your **@nnb24.de** work account in Claude Code (Max or
-Enterprise). Personal accounts are ignored and never uploaded.
+Requirements: sign in with the relevant **@nnb24.de** work identity in Claude
+Code and/or Codex. Each provider is resolved independently; personal-account
+sessions are kept local and never uploaded.
 
 ## Already installed with the script? (switching to the plugin)
 

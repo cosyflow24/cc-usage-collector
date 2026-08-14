@@ -6,13 +6,13 @@ import {
   __require,
   __toESM,
   defaultJiraConfig,
-  isWorkAccount,
   loadJiraConfig,
   resolveAccountEmail,
+  resolveCodexAccountEmail,
   resolveJiraKey,
   resolveRange,
   resolveUser
-} from "./chunk-V5XEBEJS.js";
+} from "./chunk-NEB74BZI.js";
 
 // ../../node_modules/.pnpm/commander@12.1.0/node_modules/commander/lib/error.js
 var require_error = __commonJS({
@@ -3161,8 +3161,14 @@ function emptyTotals() {
     totalTokens: 0
   };
 }
-function emptyModelUsage(model) {
-  return { model, ...emptyTotals(), costUsd: 0 };
+function emptyModelUsage(model, provider) {
+  return {
+    provider,
+    model,
+    ...emptyTotals(),
+    costUsd: 0,
+    costAvailable: provider === "claude"
+  };
 }
 function addTokens(t, r) {
   t.inputTokens += r.inputTokens;
@@ -3241,7 +3247,7 @@ function buildSession(sessionId, recs, opts) {
     if (!r.model) continue;
     let mu = perModel.get(r.model);
     if (!mu) {
-      mu = emptyModelUsage(r.model);
+      mu = emptyModelUsage(r.model, provider);
       perModel.set(r.model, mu);
     }
     addTokens(mu, r);
@@ -3269,7 +3275,7 @@ function buildSession(sessionId, recs, opts) {
     // Per-session attribution: the account signed in DURING this session (from
     // the SessionStart hook), else the global user. Lets one machine's history
     // split across accounts (e.g. enterprise earlier, max later).
-    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.user,
+    user: (opts.sessionAccounts?.get(composite) ?? opts.sessionAccounts?.get(sessionId))?.account ?? opts.providerUsers?.[provider] ?? opts.user,
     project,
     gitBranch: branch,
     jiraKey,
@@ -3282,6 +3288,7 @@ function buildSession(sessionId, recs, opts) {
     modelUsage,
     totals: sessionTotals,
     notionalCostUsd,
+    costAvailable: provider === "claude",
     // Placeholder — analyze() overwrites this with the session's DAY-BOUNDED,
     // apportioned share (see apportionSessionActive). Summing whole-session
     // lifespans double-counts multi-day sessions vs the daily rollup.
@@ -3292,10 +3299,11 @@ function rollupModels(sessions) {
   const map = /* @__PURE__ */ new Map();
   for (const s of sessions) {
     for (const mu of s.modelUsage) {
-      let agg = map.get(mu.model);
+      const key = `${mu.provider}\0${mu.model}`;
+      let agg = map.get(key);
       if (!agg) {
-        agg = emptyModelUsage(mu.model);
-        map.set(mu.model, agg);
+        agg = emptyModelUsage(mu.model, mu.provider);
+        map.set(key, agg);
       }
       mergeTotals(agg, mu);
       agg.costUsd += mu.costUsd;
@@ -3325,6 +3333,7 @@ function buildDaily(sessions) {
       modelUsage: rollupModels(ses),
       totals,
       notionalCostUsd,
+      hasUnpricedCodex: ses.some((session) => !session.costAvailable),
       activeTimeHours
     };
   }).sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
@@ -3381,7 +3390,8 @@ function analyze(records, opts) {
     daily: buildDaily(sessions),
     modelUsage: rollupModels(sessions),
     totals,
-    notionalCostUsd
+    notionalCostUsd,
+    hasUnpricedCodex: sessions.some((session) => !session.costAvailable)
   };
 }
 
@@ -3435,7 +3445,13 @@ async function fetchCcusageCost(since, until) {
       if (typeof s.agent === "string" && s.agent !== "claude") continue;
       if (typeof s.period !== "string") continue;
       const breakdowns = Array.isArray(s.modelBreakdowns) ? s.modelBreakdowns : [];
-      const models = breakdowns.filter((b) => typeof b.modelName === "string").map((b) => ({ model: b.modelName, ...toTotals(b), costUsd: num(b.cost) }));
+      const models = breakdowns.filter((b) => typeof b.modelName === "string").map((b) => ({
+        provider: "claude",
+        model: b.modelName,
+        ...toTotals(b),
+        costUsd: num(b.cost),
+        costAvailable: true
+      }));
       map.set(s.period, {
         totalCostUsd: num(s.totalCost),
         totals: toTotals(s),
@@ -3481,26 +3497,30 @@ function fmtTokens(n) {
 function fmtCost(usd) {
   return `$${usd.toFixed(2)}`;
 }
+function fmtCoveredCost(usd, hasUnpricedCodex) {
+  if (!hasUnpricedCodex) return fmtCost(usd);
+  return usd > 0 ? `${fmtCost(usd)} Claude-only` : "\u2014";
+}
 function formatTable(r) {
   const lines = [];
   lines.push(`User: ${r.user}`);
   lines.push(`Range: ${r.range.since} \u2192 ${r.range.until}`);
   lines.push("Cost is NOTIONAL (public API rates) \xB7 employees are not billed per token.");
   if (r.sessions.some((s) => s.provider === "codex")) {
-    lines.push("Codex subscription models without a published local rate show $0, never an invented estimate.");
+    lines.push("Codex subscription pricing is unavailable; no zero-dollar estimate is shown.");
   }
   lines.push("");
   lines.push("By model:");
   for (const m of r.modelUsage) {
     lines.push(
-      `  ${m.model.padEnd(28)} ${fmtCost(m.costUsd).padStart(9)}  ${fmtTokens(m.totalTokens).padStart(8)}  (in ${fmtTokens(m.inputTokens)} / out ${fmtTokens(m.outputTokens)} / cache ${fmtTokens(m.cacheCreationTokens + m.cacheReadTokens)})`
+      `  ${m.model.padEnd(28)} ${(m.costAvailable ? fmtCost(m.costUsd) : "\u2014").padStart(9)}  ${fmtTokens(m.totalTokens).padStart(8)}  (in ${fmtTokens(m.inputTokens)} / out ${fmtTokens(m.outputTokens)} / cache ${fmtTokens(m.cacheCreationTokens + m.cacheReadTokens)})`
     );
   }
   lines.push("");
   lines.push("By day:");
   for (const d of r.daily) {
     lines.push(
-      `  ${d.day}  sessions ${String(d.sessions).padStart(3)}  cost ${fmtCost(d.notionalCostUsd).padStart(9)}  tokens ${fmtTokens(d.totals.totalTokens).padStart(8)}`
+      `  ${d.day}  sessions ${String(d.sessions).padStart(3)}  cost ${fmtCoveredCost(d.notionalCostUsd, d.hasUnpricedCodex).padStart(9)}  tokens ${fmtTokens(d.totals.totalTokens).padStart(8)}`
     );
   }
   lines.push("");
@@ -3508,12 +3528,12 @@ function formatTable(r) {
   for (const s of r.sessions) {
     const tag = s.epicKey ?? s.jiraKey ?? s.gitBranch ?? "-";
     lines.push(
-      `  ${s.day}  ${s.provider.padEnd(7)}  ${(s.project ?? "-").padEnd(22).slice(0, 22)}  ${tag.padEnd(16).slice(0, 16)}  ${fmtCost(s.notionalCostUsd).padStart(9)}  ${fmtTokens(s.totals.totalTokens).padStart(8)}  [${s.models.join(",")}]`
+      `  ${s.day}  ${s.provider.padEnd(7)}  ${(s.project ?? "-").padEnd(22).slice(0, 22)}  ${tag.padEnd(16).slice(0, 16)}  ${(s.costAvailable ? fmtCost(s.notionalCostUsd) : "\u2014").padStart(9)}  ${fmtTokens(s.totals.totalTokens).padStart(8)}  [${s.models.join(",")}]`
     );
   }
   lines.push("");
   lines.push(
-    `TOTAL  sessions ${r.sessions.length}  notional ${fmtCost(r.notionalCostUsd)}  tokens ${fmtTokens(r.totals.totalTokens)}`
+    `TOTAL  sessions ${r.sessions.length}  notional ${fmtCoveredCost(r.notionalCostUsd, r.hasUnpricedCodex)}  tokens ${fmtTokens(r.totals.totalTokens)}`
   );
   return lines.join("\n");
 }
@@ -3901,6 +3921,10 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
   const ccusageCost = await fetchCcusageCost(since, until);
   const result = analyze(records, {
     user,
+    providerUsers: opts.user ? { claude: user, codex: user } : {
+      claude: resolveAccountEmail() ?? user,
+      codex: resolveCodexAccountEmail() ?? user
+    },
     since,
     until,
     idleGapMs,
@@ -3931,16 +3955,6 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
     }
   }
   if (opts.upload) {
-    const account = resolveAccountEmail();
-    if (!isWorkAccount(account)) {
-      const who = account ?? "no account found";
-      const domain = process.env.CC_USAGE_WORK_DOMAIN ?? "nnb24.de";
-      process.stderr.write(
-        `Skipping upload: '${who}' is not a @${domain} work account. Sign into your work account in Claude Code to report usage.
-`
-      );
-      return;
-    }
     const toUpload = result;
     const unassigned = result.sessions.filter((s) => !s.jiraKey).length;
     if (unassigned > 0) {
@@ -3954,7 +3968,7 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-EV4UDK7D.js");
+    const { httpUpload } = await import("./upload-VT3GWVYR.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken

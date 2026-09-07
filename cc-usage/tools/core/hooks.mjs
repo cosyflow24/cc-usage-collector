@@ -55,6 +55,18 @@ function currentProvider(payload) {
   return codexSid && (!payloadSid || payloadSid === codexSid) ? "codex" : "claude";
 }
 
+// The two hosts do not share an ask-the-user tool, and naming the wrong one
+// leaves the agent improvising. Claude Code has AskUserQuestion. Codex has
+// request_user_input (and request_user_input_async where the host only offers
+// the sync form in Plan mode); this machine's Codex developer_instructions
+// spell out exactly that mapping. Attribution is an optional question, not a
+// permission request, so the structured tool is the right fit.
+function askToolPhrase(provider) {
+  return provider === "codex"
+    ? "call the request_user_input tool (or request_user_input_async if the host only offers the sync form in Plan mode)"
+    : 'call the AskUserQuestion tool (header "cc-usage")';
+}
+
 function hookSessionId(payload, provider) {
   if (provider === "codex" && process.env.CODEX_THREAD_ID) return process.env.CODEX_THREAD_ID;
   return payload.session_id || payload.sessionId || "";
@@ -99,7 +111,7 @@ export function sessionStart(payload) {
   const optionsList = keys.length ? keys.join(", ") : "(none on record)";
   const launcher = `node ${JSON.stringify(resolverPath)} task`;
   const additionalContext = `[cc-usage] This ${provider} session is not yet attributed to a Jira `
-    + "issue. At the START of your first reply, call the AskUserQuestion tool (header \"cc-usage\") "
+    + `issue. At the START of your first reply, ${askToolPhrase(provider)} `
     + "asking which Jira issue this session is for, in the user's language. Offer these options as "
     + `clickable choices: the recent/branch keys [${optionsList}], plus "None — don't track". `
     + "The built-in \"Other\" choice lets the user type a different key. When the user answers, record "
@@ -156,7 +168,7 @@ export function promptSubmit(payload) {
         // AskUserQuestion; each option maps to exactly one deterministic CLI
         // call. Non-blocking — the user's actual prompt still goes through.
         const additionalContext = `[cc-usage] Task drift: this session is recorded as ${declared.jira}, `
-          + `but the git branch points to ${bk}. At the START of your reply, call the AskUserQuestion tool `
+          + `but the git branch points to ${bk}. At the START of your reply, ${askToolPhrase(provider)} `
           + `(header "cc-usage") asking, in the user's language, whether to switch. Options: `
           + `"Switch to ${bk}" (then run \`${launcher} ${bk}\`), "Keep ${declared.jira}" (run nothing), `
           + `"Stop tracking" (run \`${launcher} none\`). Ask once for this branch; if ignored, continue without blocking.`;
@@ -171,7 +183,7 @@ export function promptSubmit(payload) {
         writeMarker(mark);
         const ageD = Math.round((ageH / 24) * 10) / 10;
         const additionalContext = `[cc-usage] Stale attribution: this session was bound to ${declared.jira} `
-          + `${ageD} day(s) ago. At the START of your reply, call the AskUserQuestion tool (header "cc-usage") `
+          + `${ageD} day(s) ago. At the START of your reply, ${askToolPhrase(provider)} `
           + `asking, in the user's language, whether that is still the right issue. Options: `
           + `"Keep ${declared.jira}" (run nothing), "Switch issue" (let the built-in Other collect a KEY matching `
           + `^[A-Z][A-Z0-9]+-[0-9]+$, then run \`${launcher} <KEY>\`), "Stop tracking" (run \`${launcher} none\`). `
@@ -202,7 +214,7 @@ export function promptSubmit(payload) {
   // Backstop mirrors the SessionStart interaction: clickable AskUserQuestion,
   // deterministic CLI mapping, never a hard block of the user's prompt.
   const additionalContext = "[cc-usage] This session is still not attributed to a Jira issue "
-    + "(the earlier question was not answered). At the START of your reply, call the AskUserQuestion "
+    + `(the earlier question was not answered). At the START of your reply, ${askToolPhrase(provider)} `
     + "tool (header \"cc-usage\") asking which Jira issue this session is for, in the user's language. "
     + `Offer these clickable options: the recent/branch keys [${optionsList}], plus "None — don't track". `
     + "The built-in \"Other\" choice lets the user type a different key. When the user answers, run exactly "

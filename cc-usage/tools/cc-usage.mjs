@@ -27,7 +27,7 @@ import { verifyToken } from "./core/verify.mjs";
 import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const out = (value = "") => process.stdout.write(`${value}\n`);
 const fail = (message, code = 1) => { const e = new Error(message); e.exitCode = code; throw e; };
 const need = (value, message) => value || fail(message);

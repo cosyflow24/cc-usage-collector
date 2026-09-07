@@ -109,10 +109,16 @@ twice. To switch cleanly:
 
 ## Updating
 
-**Plugin install:**
+**Plugin install:** nothing to do. A SessionStart hook updates the plugin once a
+day in a detached background worker, for every host CLI present — Claude Code and
+Codex. One host missing or failing never stops the other. The update applies on
+the next session. Log: `~/.claude/cc-usage/autoupdate.log`. Opt out with
+`CC_USAGE_NO_AUTOUPDATE=1`, then update by hand:
 
 ```bash
-claude plugin update cc-usage@cc-usage
+# the marketplace refresh is optional (it fails on a local-path marketplace); the install runs either way
+claude plugin marketplace update cc-usage; claude plugin update cc-usage@cc-usage
+codex plugin marketplace upgrade cc-usage; codex plugin add cc-usage@cc-usage
 ```
 
 Start a new Claude Code session and run `/cc-usage-doctor`.

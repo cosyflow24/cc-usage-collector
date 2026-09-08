@@ -17,7 +17,13 @@ directories above it. Do not assume `cc-usage` is already on PATH.
    node <plugin-root>/tools/cc-usage.mjs refresh
    ```
 
-2. Tell the user to run `cc-usage login` in an ordinary interactive terminal.
+2. Verify the launcher is on PATH (`command -v cc-usage` on POSIX,
+   `Get-Command cc-usage` in PowerShell). If absent, use its absolute path:
+   POSIX `"$HOME/.local/bin/cc-usage" login`; PowerShell
+   `& "$env:LOCALAPPDATA/cc-usage/bin/cc-usage.ps1" login`.
+   Add that launcher directory to the user's PATH for future terminals only if
+   requested. Otherwise use the absolute path for doctor and sync too.
+   Run login in an ordinary interactive terminal.
    Token input is hidden and stored in the OS keyring; never ask them to paste it
    into chat or put it in a shell argument.
 3. Ask the user to open `/hooks` in Codex and trust the current CC Usage hook

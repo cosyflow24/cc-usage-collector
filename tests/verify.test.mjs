@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { verifyToken, whoamiUrl } from "../cc-usage/tools/core/verify.mjs";
@@ -31,4 +34,13 @@ test("401/403 → rejected; 5xx and network errors → unreachable (never reject
 test("missing token is rejected without a network call", async () => {
   const neverCalled = async () => { throw new Error("must not fetch"); };
   assert.equal((await verifyToken("u", "", { fetchImpl: neverCalled })).verdict, "rejected");
+});
+
+
+test("CLI contract version matches the installable package", () => {
+  const root = new URL("../cc-usage/", import.meta.url);
+  const expected = JSON.parse(readFileSync(new URL("package.json", root), "utf8")).version;
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("tools/cc-usage.mjs", root)), "contract"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).version, expected);
 });

@@ -1,6 +1,6 @@
 {
   "name": "cc-usage",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Team usage tracking for Claude Code and Codex, with local-only task/session context recovery. Uploads metadata only, never prompts or Jira credentials.",
   "author": {
     "name": "cosyflow24"

@@ -103,6 +103,21 @@ function resolveAccountEmail() {
   }
   return null;
 }
+function resolveCodexAccountEmail() {
+  const file = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "auth.json");
+  try {
+    const auth = JSON.parse(readFileSync(file, "utf8"));
+    const token = auth.tokens?.id_token;
+    if (typeof token !== "string") return null;
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")
+    );
+    const email = typeof payload.email === "string" ? payload.email.toLowerCase() : "";
+    return email.includes("@") ? email : null;
+  } catch {
+    return null;
+  }
+}
 function isWorkAccount(email, domain = process.env.CC_USAGE_WORK_DOMAIN ?? DEFAULT_WORK_DOMAIN) {
   if (!email) return false;
   return email.toLowerCase().endsWith(`@${domain.toLowerCase()}`);
@@ -155,6 +170,7 @@ export {
   defaultJiraConfig,
   resolveJiraKey,
   resolveAccountEmail,
+  resolveCodexAccountEmail,
   isWorkAccount,
   loadJiraConfig,
   resolveUser,

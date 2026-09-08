@@ -1,6 +1,7 @@
 # cc-usage — collector (employee install)
 
-Reports your **Claude Code usage** (tokens, notional cost, coarse active hours) to
+Reports your **Claude Code and Codex usage** (tokens, notional cost where a public
+rate exists, coarse active hours) to
 the team dashboard, grouped by project / Jira task. **Usage metadata only — never
 your prompts or responses, no exact clock times.** For planning and cost insight,
 **not** employee surveillance.
@@ -10,8 +11,7 @@ separate private repo — you don't need it and never see it.
 
 It is also separate from `nnb-jira`: a Jira key here is only a usage label.
 CCUsage has no Jira credentials and cannot perform Jira operations. There is no
-supported `cc-usage-beta` or `nnb-jira-beta` plugin. This collector plugin
-currently supports Claude Code only, not Codex.
+supported `cc-usage-beta` or `nnb-jira-beta` plugin.
 
 > **Which email?** Enter your `@nnb24.de` Claude work email. Have **two** logins
 > — an **Enterprise** `first.last@nnb24.de` and a **Max** `lastname@nnb24.de`?
@@ -43,6 +43,24 @@ is **public** (no login, no shared secret);
 the token uploads **as you** only and can be revoked individually — you never
 touch the dashboard.
 
+### Codex
+
+The same repository is also a Codex marketplace:
+
+```bash
+codex plugin marketplace add cosyflow24/cc-usage-collector
+codex plugin add cc-usage@cc-usage
+```
+
+Start a new Codex thread, ask **“Set up CC Usage”**, then open `/hooks` and trust
+the current CC Usage hooks. The setup skill installs the stable launcher before
+it asks you to run `cc-usage login` in a normal terminal, so a fresh plugin
+install never depends on a command that is not on PATH yet.
+
+The shared hooks bind
+`CODEX_THREAD_ID` directly, collect `~/.codex/sessions/**/*.jsonl`, and keep the
+same metadata-only upload boundary.
+
 ## Install — script (alternative)
 
 Prefer a terminal? The `/enroll` page also hands you a one-liner that clones this
@@ -62,8 +80,9 @@ The installer is idempotent and will:
 4. Wire up the Claude Code hooks and the `/cc-usage:task` + `/burn` commands.
 5. Do a dry run (no upload) to prove parsing works.
 
-Requirements: signed into your **@nnb24.de** work account in Claude Code (Max or
-Enterprise). Personal accounts are ignored and never uploaded.
+Requirements: sign in with the relevant **@nnb24.de** work identity in Claude
+Code and/or Codex. Each provider is resolved independently; personal-account
+sessions are kept local and never uploaded.
 
 ## Already installed with the script? (switching to the plugin)
 
@@ -90,10 +109,16 @@ twice. To switch cleanly:
 
 ## Updating
 
-**Plugin install:**
+**Plugin install:** nothing to do. A SessionStart hook updates the plugin once a
+day in a detached background worker, for every host CLI present — Claude Code and
+Codex. One host missing or failing never stops the other. The update applies on
+the next session. Log: `~/.claude/cc-usage/autoupdate.log`. Opt out with
+`CC_USAGE_NO_AUTOUPDATE=1`, then update by hand:
 
 ```bash
-claude plugin update cc-usage@cc-usage
+# the marketplace refresh is optional (it fails on a local-path marketplace); the install runs either way
+claude plugin marketplace update cc-usage; claude plugin update cc-usage@cc-usage
+codex plugin marketplace upgrade cc-usage; codex plugin add cc-usage@cc-usage
 ```
 
 Start a new Claude Code session and run `/cc-usage-doctor`.
@@ -136,6 +161,19 @@ Nothing to do — usage uploads on its own when a session ends. Two commands:
 /burn            # live: your current 5h rate-limit window usage + burn rate
 ```
 
+The stable CLI works in both hosts:
+
+```bash
+cc-usage task BI-220                  # bind the current Claude/Codex session
+cc-usage sessions BI-220 --json       # find both providers for a task
+cc-usage context BI-220               # print local-only user/assistant context
+cc-usage resume codex:<session-id>    # print the native codex resume command
+```
+
+In Codex, ask to load a Jira task or session ID. The bundled
+`cc-usage-context` skill resolves the session and imports bounded local context.
+Claude sessions are imported; Codex sessions can also be resumed natively.
+
 The first prompt in a monitored project pauses once to ask which Jira task it's
 for — just answer with `/cc-usage:task`.
 
@@ -154,11 +192,17 @@ is kept unless you explicitly use the script installer's `--purge` cleanup.
 
 ## Privacy
 
-Stored: tokens, notional cost, model, project folder, git branch, Jira key, and a
+Uploaded: tokens, provider, notional cost where available, model, project folder,
+git branch, Jira key, parent/root session IDs, agent role, and a
 coarse hours-per-day estimate. **Not** stored: prompt/response content, exact
 timestamps, work/attendance time. No automatic Jira worklog export, no per-person
 ranking. The active-time figure is labelled "Claude-active time (estimate)" and is
 explicitly **≠ working time**.
+
+`cc-usage context` reads prompt/response text only from this machine and writes it
+to stdout for the current assistant. It excludes developer/system messages and
+tool payloads, never sends the text through the ingest API, and never stores a
+second transcript copy.
 
 ## What it uploads to (your admin configures)
 

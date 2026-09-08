@@ -1,0 +1,20 @@
+{
+  "name": "cc-usage",
+  "interface": {
+    "displayName": "CC Usage"
+  },
+  "plugins": [
+    {
+      "name": "cc-usage",
+      "source": {
+        "source": "local",
+        "path": "./cc-usage"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

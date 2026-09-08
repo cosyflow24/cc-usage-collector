@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { STATE_DIR, CLAUDE_JSON } from "./config.mjs";
+import { STATE_DIR, readProviderEmail } from "./config.mjs";
 
 // Pull the first Jira key out of any input (bare key, browse URL, or a sentence
 // containing one), so users can paste a link without hand-trimming it to the key.
@@ -29,11 +29,11 @@ export function readCurrent() {
 }
 
 // Keep cwd -> live sessionId fresh so `task` can resolve THIS session later.
-export function mapCwd(cwd, sid) {
+export function mapCwd(cwd, sid, provider = "claude") {
   if (!sid) return;
   ensureStateDir();
   const cur = readCurrent();
-  cur[cwd] = sid;
+  cur[provider === "codex" ? `codex:${cwd}` : cwd] = sid;
   try { writeFileSync(currentFile(), JSON.stringify(cur)); } catch { /* ignore */ }
 }
 
@@ -67,21 +67,38 @@ export function claimMarker(name) {
 // Resolve the session id $PWD-independently, exactly as set-task.sh did:
 // CLAUDE_CODE_SESSION_ID (authoritative) -> exact cwd -> case-insensitive cwd ->
 // the sole registered session.
-export function resolveSid(cwd, cur = readCurrent()) {
+export function resolveSession(cwd, cur = readCurrent()) {
+  const codexSid = process.env.CODEX_THREAD_ID || "";
+  if (codexSid) return { provider: "codex", sid: codexSid };
   const envSid = process.env.CLAUDE_CODE_SESSION_ID || "";
-  if (envSid) return envSid;
-  if (cur[cwd]) return cur[cwd];
+  if (envSid) return { provider: "claude", sid: envSid };
+  if (cur[cwd]) return { provider: "claude", sid: cur[cwd] };
+  if (cur[`codex:${cwd}`]) return { provider: "codex", sid: cur[`codex:${cwd}`] };
   const lc = cwd.toLowerCase();
   const ciHit = Object.keys(cur).find((k) => k.toLowerCase() === lc);
-  if (ciHit) return cur[ciHit];
+  if (ciHit) return { provider: "claude", sid: cur[ciHit] };
+  const codexHit = Object.keys(cur).find((k) => k.toLowerCase() === `codex:${lc}`);
+  if (codexHit) return { provider: "codex", sid: cur[codexHit] };
   const keys = Object.keys(cur);
-  return keys.length === 1 ? cur[keys[0]] : "";
+  if (keys.length === 1) {
+    const key = keys[0];
+    return { provider: key.startsWith("codex:") ? "codex" : "claude", sid: cur[key] };
+  }
+  return { provider: "claude", sid: "" };
+}
+
+export function resolveSid(cwd, cur = readCurrent()) {
+  return resolveSession(cwd, cur).sid;
 }
 
 // The cwd the SessionStart hook registered for this sid (reverse lookup), so the
 // stored row + `last` matching stay consistent regardless of invocation dir.
-export function registeredCwd(sid, cwd, cur = readCurrent()) {
-  for (const [k, v] of Object.entries(cur)) if (v === sid) return k;
+export function registeredCwd(sid, cwd, cur = readCurrent(), provider = "claude") {
+  for (const [k, v] of Object.entries(cur)) {
+    if (v !== sid) continue;
+    if (provider === "codex" && k.startsWith("codex:")) return k.slice("codex:".length);
+    if (provider === "claude" && !k.startsWith("codex:")) return k;
+  }
   return cwd;
 }
 
@@ -96,19 +113,22 @@ export function branchKey(cwd) {
 }
 
 // Latest task row (with a jira key) for this session — declared attribution.
-export function declaredRow(sid) {
+export function declaredRow(sid, provider = "claude") {
   try {
     const lines = readFileSync(tasksFile(), "utf8").split("\n").filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i -= 1) {
       try {
         const r = JSON.parse(lines[i]);
-        if (r && r.sessionId === sid && r.jira) return r;
+        const rowProvider = r?.provider === "codex" ? "codex" : "claude";
+        if (r && rowProvider === provider && r.sessionId === sid && r.jira) return r;
       } catch { /* skip */ }
     }
   } catch { /* no file */ }
   return null;
 }
-export function isDeclared(sid) { return declaredRow(sid) !== null; }
+export function isDeclared(sid, provider = "claude") {
+  return declaredRow(sid, provider) !== null;
+}
 
 // Sticky auto-bind candidate for a cwd: the most-recent key. Returns "" (→ ask
 // instead) when there is no history, when the newest key is older than ttlDays
@@ -146,17 +166,16 @@ export function recentForCwd(cwd, limit = 3) {
   return out;
 }
 
-// Per-session account/plan capture from ~/.claude.json — so each session is
-// credited to the plan actually in use then. Appends a `hook-acct` row.
-export function captureAccount(sid, cwd) {
+// Per-session account capture from the matching provider's authenticated
+// identity. Never attribute a Codex session to the unrelated Claude login.
+export function captureAccount(sid, cwd, provider = "claude") {
   if (!sid) return;
   try {
-    const oa = JSON.parse(readFileSync(CLAUDE_JSON, "utf8")).oauthAccount || {};
-    const account = String(oa.emailAddress || "").toLowerCase();
-    const plan = String(oa.organizationType || "");
+    const account = readProviderEmail(provider);
     if (account.includes("@")) {
       appendRow({
-        schemaVersion: 1, sessionId: sid, account, plan, cwd,
+        schemaVersion: 1, provider, sessionId: sid, account, cwd,
+        identitySource: provider === "codex" ? "codex-id-token" : "claude-oauth",
         ts: new Date().toISOString(), src: "hook-acct",
       });
     }
@@ -170,12 +189,12 @@ export function setTask(rawKey, rawEpic, cwd) {
   let epic = (rawEpic || "").toUpperCase();
   ensureStateDir();
   const cur = readCurrent();
-  const sid = resolveSid(cwd, cur);
+  const { provider, sid } = resolveSession(cwd, cur);
   if (!sid) {
-    const e = new Error("no active session found (start a Claude Code session, then retry)");
+    const e = new Error("no active Claude Code or Codex session found; start one, then retry");
     e.exitCode = 1; throw e;
   }
-  const regCwd = registeredCwd(sid, cwd, cur);
+  const regCwd = registeredCwd(sid, cwd, cur, provider);
   const regCwdLc = regCwd.toLowerCase();
 
   if (key === "LAST") {
@@ -197,7 +216,7 @@ export function setTask(rawKey, rawEpic, cwd) {
   }
 
   if (key === "NONE") {
-    writeMarker(sid);
+    writeMarker(`${provider}-${sid}`);
     return "cc-usage: session marked not tracked (no Jira task).";
   }
 
@@ -211,10 +230,10 @@ export function setTask(rawKey, rawEpic, cwd) {
   }
 
   const row = {
-    schemaVersion: 1, sessionId: sid, jira: key, cwd: regCwd,
+    schemaVersion: 1, sessionId: sid, provider, jira: key, cwd: regCwd,
     ts: new Date().toISOString(), src: "task-cmd",
   };
   if (epic) row.epic = epic;
   appendRow(row);
-  return `cc-usage: session attributed to ${key}${epic ? ` (epic ${epic})` : ""}`;
+  return `cc-usage: ${provider} session attributed to ${key}${epic ? ` (epic ${epic})` : ""}`;
 }

@@ -1,4 +1,4 @@
-import type { ModelUsage, TokenTotals } from "./types.ts";
+import type { ModelUsage, TokenTotals, UsageProvider } from "./types.ts";
 
 /**
  * Notional USD pricing. We compute what tokens WOULD cost at public API rates;
@@ -70,7 +70,14 @@ function rateFor(model: string): Rate {
 }
 
 /** Notional USD cost for a per-model token rollup. */
-export function costForModelUsage(mu: Pick<ModelUsage, "model"> & TokenTotals): number {
+export function costForModelUsage(
+  mu: Pick<ModelUsage, "model"> & TokenTotals,
+  provider: UsageProvider = "claude",
+): number {
+  // Codex subscription models do not publish a per-token bill in the local
+  // session data. Returning zero is honest; inventing an Anthropic fallback
+  // rate would make the unified dashboard look precise while being wrong.
+  if (provider === "codex") return 0;
   const r = rateFor(mu.model);
   const cost =
     (mu.inputTokens * r.input +

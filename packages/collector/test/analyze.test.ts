@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { analyze } from "../src/analyze.ts";
+import { formatTable } from "../src/format.ts";
+import { loadSessionAccounts } from "../src/sidecar.ts";
 import type { UsageRecord } from "../src/types.ts";
 
 // Timestamps deliberately have NO timezone suffix → parsed as LOCAL time, so
 // localDay() buckets them deterministically regardless of the machine's TZ.
 function rec(sessionId: string, iso: string): UsageRecord {
   return {
+    provider: "claude",
     sessionId,
+    parentSessionId: null,
+    rootSessionId: sessionId,
+    agentRole: null,
     timestamp: new Date(iso),
     model: "claude-sonnet-4",
     cwd: "/w/proj",
@@ -20,6 +30,165 @@ function rec(sessionId: string, iso: string): UsageRecord {
     kind: "prompt",
   };
 }
+
+test("provider is part of session identity and daily usage stays unified", () => {
+  const claude = rec("same-id", "2026-07-13T10:00:00");
+  const codex: UsageRecord = {
+    ...rec("same-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    inputTokens: 20,
+    outputTokens: 7,
+  };
+  const result = analyze([claude, codex], {
+    user: "work@nnb24.de",
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionTasks: new Map([
+      ["claude:same-id", { jira: "BI-1" }],
+      ["codex:same-id", { jira: "BI-2" }],
+    ]),
+  });
+
+  assert.equal(result.sessions.length, 2);
+  assert.deepEqual(
+    result.sessions.map((s) => `${s.provider}:${s.sessionId}:${s.jiraKey}`).sort(),
+    ["claude:same-id:BI-1", "codex:same-id:BI-2"],
+  );
+  assert.equal(result.daily.length, 1);
+  assert.equal(result.daily[0]!.sessions, 2);
+  assert.equal(result.daily[0]!.totals.totalTokens, 42);
+  assert.equal(result.daily[0]!.hasUnpricedCodex, true);
+  assert.equal(result.hasUnpricedCodex, true);
+  assert.equal(result.modelUsage.find((m) => m.provider === "codex")?.costAvailable, false);
+  assert.match(formatTable(result), /Claude-only|—/);
+  assert.doesNotMatch(formatTable(result), /gpt-5\.6-sol\s+\$0\.00/);
+});
+
+test("provider-specific account fallback does not assign Codex to Claude", () => {
+  const claude = rec("claude-id", "2026-07-13T10:00:00");
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([claude, codex], {
+    user: "fallback@nnb24.de",
+    providerUsers: {
+      claude: "claude@nnb24.de",
+      codex: "codex@personal.dev",
+    },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+  });
+  assert.deepEqual(
+    result.sessions.map((session) => `${session.provider}:${session.user}`).sort(),
+    ["claude:claude@nnb24.de", "codex:codex@personal.dev"],
+  );
+});
+
+test("missing Codex identity fails closed instead of borrowing the Claude account", () => {
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([codex], {
+    user: "claude@nnb24.de",
+    providerUsers: { claude: "claude@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    // Bare legacy rows and pre-fix provider-scoped rows both belong to Claude.
+    sessionAccounts: new Map([
+      ["codex-id", { account: "claude@nnb24.de" }],
+      ["codex:codex-id", { account: "claude@nnb24.de" }],
+    ]),
+  });
+  assert.equal(result.sessions[0]?.user, "unknown-codex-account");
+});
+
+test("verified historical Codex identity remains valid after the account signs out", () => {
+  const codex: UsageRecord = {
+    ...rec("codex-id", "2026-07-13T10:01:00"),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  };
+  const result = analyze([codex], {
+    user: "claude@nnb24.de",
+    providerUsers: { claude: "claude@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([[
+      "codex:codex-id",
+      { account: "codex@nnb24.de", providerVerified: true },
+    ]]),
+  });
+  assert.equal(result.sessions[0]?.user, "codex@nnb24.de");
+});
+
+test("sidecar identity source flows through loader into fail-closed analysis", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cc-usage-sidecar-"));
+  const claudeDir = path.join(dir, "claude");
+  const codexDir = path.join(dir, "codex");
+  const file = path.join(claudeDir, "cc-usage", "tasks.jsonl");
+  try {
+    mkdirSync(path.join(claudeDir, "cc-usage"), { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(file, `${JSON.stringify({
+      provider: "codex", sessionId: "old", account: "claude@nnb24.de",
+      ts: "2026-07-13T09:00:00Z", src: "hook-acct",
+    })}\n`);
+    const jwt = `header.${Buffer.from(JSON.stringify({ email: "codex@nnb24.de" })).toString("base64url")}.sig`;
+    writeFileSync(
+      path.join(codexDir, "auth.json"),
+      JSON.stringify({ tokens: { id_token: jwt } }),
+    );
+    const hookModule = new URL("../../../cc-usage/tools/core/hooks.mjs", import.meta.url).href;
+    const captured = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      const { sessionStart } = await import(${JSON.stringify(hookModule)});
+      sessionStart({ session_id: "verified", cwd: "/work" });
+    `], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CI: "1",
+        CC_USAGE_NO_AUTOUPDATE: "1",
+        CLAUDE_CONFIG_DIR: claudeDir,
+        CODEX_HOME: codexDir,
+        CODEX_THREAD_ID: "verified",
+      },
+    });
+    assert.equal(captured.status, 0, captured.stderr);
+    const sessionAccounts = loadSessionAccounts(file);
+    const records: UsageRecord[] = [
+      { ...rec("old", "2026-07-13T10:00:00"), provider: "codex", model: "gpt-5.6-sol" },
+      { ...rec("verified", "2026-07-13T10:01:00"), provider: "codex", model: "gpt-5.6-sol" },
+    ];
+    const result = analyze(records, {
+      user: "claude@nnb24.de",
+      providerUsers: { claude: "claude@nnb24.de", codex: null },
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+      sessionAccounts,
+    });
+    assert.deepEqual(
+      result.sessions.map((session) => `${session.sessionId}:${session.user}`).sort(),
+      ["old:unknown-codex-account", "verified:codex@nnb24.de"],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("daily rollup is per (user, day) — a mixed-account day never lumps under the first session's account", () => {
   // Two sessions on the SAME local day, each signed into a different account

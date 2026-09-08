@@ -2,14 +2,14 @@ import { Command } from "commander";
 import { analyze } from "./analyze.ts";
 import { fetchCcusageCost, fetchCcusageDailyTotal } from "./ccusage.ts";
 import {
-  isWorkAccount,
   loadJiraConfig,
   resolveAccountEmail,
+  resolveCodexAccountEmail,
   resolveRange,
   resolveUser,
 } from "./config.ts";
 import { formatTable } from "./format.ts";
-import { readRecords } from "./parser.ts";
+import { readUsageRecords } from "./parser.ts";
 import { loadSessionAccounts, loadSessionTasks } from "./sidecar.ts";
 
 const DEFAULT_IDLE_GAP_MIN = 15;
@@ -17,7 +17,7 @@ const DEFAULT_IDLE_GAP_MIN = 15;
 const program = new Command();
 program
   .name("cc-usage")
-  .description("Analyze Claude Code session logs; notional cost + token attribution.")
+  .description("Analyze Claude Code + Codex session logs; usage and task attribution.")
   .option("-s, --since <iso>", "start of range (ISO date/datetime)")
   .option("-u, --until <iso>", "end of range (ISO date/datetime)")
   .option("-d, --days <n>", "look back N local days (default: 1 = yesterday)")
@@ -44,7 +44,7 @@ program
 
     const sessionTasks = loadSessionTasks();
     const sessionAccounts = loadSessionAccounts();
-    const records = await readRecords(since, until);
+    const records = await readUsageRecords(since, until);
 
     // ccusage is the cost ORACLE (higher fidelity), but optional: null on any
     // failure → pricing.ts is the self-sufficient primary path.
@@ -52,6 +52,12 @@ program
 
     const result = analyze(records, {
       user,
+      providerUsers: opts.user ? { claude: user, codex: user } : {
+        claude: resolveAccountEmail() ?? user,
+        // Fail closed: an unreadable/missing Codex identity must never borrow
+        // the Claude work email and thereby pass the upload work-domain gate.
+        codex: resolveCodexAccountEmail(),
+      },
       since,
       until,
       idleGapMs,
@@ -84,19 +90,6 @@ program
     }
 
     if (opts.upload) {
-      // POLICY: only report when signed into a work account. A developer on a
-      // personal Claude account is never uploaded.
-      const account = resolveAccountEmail();
-      if (!isWorkAccount(account)) {
-        const who = account ?? "no account found";
-        const domain = process.env.CC_USAGE_WORK_DOMAIN ?? "nnb24.de";
-        process.stderr.write(
-          `Skipping upload: '${who}' is not a @${domain} work account. ` +
-            "Sign into your work account in Claude Code to report usage.\n",
-        );
-        return;
-      }
-
       // Upload ALL sessions (KI-764 three-state): untagged work lands under
       // "Unassigned" instead of being dropped, so the dashboard shows full
       // per-project usage. A jira key is backfilled later via /task or reclaim.

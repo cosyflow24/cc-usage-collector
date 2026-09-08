@@ -100,7 +100,7 @@ function main() {
   const runtime = resolveRuntime();
   if (!runtime) {
     const msg = "cc-usage: no installed plugin runtime found (plugin uninstalled or cache cleaned).\n"
-      + "Fix: start a Claude Code session (the plugin's SessionStart hook re-registers itself),\n"
+      + "Fix: start a Claude Code or Codex session (the plugin's SessionStart hook re-registers itself),\n"
       + "or reinstall the cc-usage plugin.\n";
     process.stderr.write(msg);
     // The daily LaunchAgent runs unattended — leave a trace doctor can surface,

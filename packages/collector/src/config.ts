@@ -32,6 +32,25 @@ export function resolveAccountEmail(): string | null {
   return null;
 }
 
+/** Read the email claim from Codex's local ID token without exposing the token. */
+export function resolveCodexAccountEmail(): string | null {
+  const file = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "auth.json");
+  try {
+    const auth = JSON.parse(readFileSync(file, "utf8")) as {
+      tokens?: { id_token?: unknown };
+    };
+    const token = auth.tokens?.id_token;
+    if (typeof token !== "string") return null;
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
+    ) as { email?: unknown };
+    const email = typeof payload.email === "string" ? payload.email.toLowerCase() : "";
+    return email.includes("@") ? email : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * True when the currently logged-in Claude account is a work account (its email
  * ends with the configured domain). PRIVACY/POLICY: only work-account usage is

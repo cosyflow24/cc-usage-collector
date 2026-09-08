@@ -12,7 +12,11 @@ const totals: TokenTotals = {
 };
 
 const session: SessionSummary = {
+  provider: "claude",
   sessionId: "s1",
+  parentSessionId: null,
+  rootSessionId: "s1",
+  agentRole: null,
   user: "dev@nnb24.de", // work domain → passes the upload gate
   project: "proj",
   gitBranch: "main",
@@ -22,9 +26,16 @@ const session: SessionSummary = {
   day: "2026-07-13",
   messageCount: 3,
   models: ["claude-sonnet-4"],
-  modelUsage: [{ model: "claude-sonnet-4", ...totals, costUsd: 0.1 }],
+  modelUsage: [{
+    provider: "claude",
+    model: "claude-sonnet-4",
+    ...totals,
+    costUsd: 0.1,
+    costAvailable: true,
+  }],
   totals,
   notionalCostUsd: 0.1,
+  costAvailable: true,
   activeTimeHours: 0.5,
 };
 
@@ -41,15 +52,24 @@ test("httpUpload: wire payload is an explicit projection — fields outside the 
         day: "2026-07-13",
         user: "dev@nnb24.de",
         sessions: 1,
-        modelUsage: [{ model: "claude-sonnet-4", ...totals, costUsd: 0.1, secret: "x" } as never],
+        modelUsage: [{
+          provider: "claude",
+          model: "claude-sonnet-4",
+          ...totals,
+          costUsd: 0.1,
+          costAvailable: true,
+          secret: "x",
+        } as never],
         totals,
         notionalCostUsd: 0.1,
+        hasUnpricedCodex: false,
         activeTimeHours: 0.5,
       },
     ],
     modelUsage: [],
     totals,
     notionalCostUsd: 0.1,
+    hasUnpricedCodex: false,
   };
 
   const bodies: string[] = [];
@@ -71,9 +91,9 @@ test("httpUpload: wire payload is an explicit projection — fields outside the 
   assert.deepEqual(
     Object.keys(wire.sessions[0]!).sort(),
     [
-      "activeTimeHours", "day", "epicKey", "epicSummary", "gitBranch", "jiraKey",
-      "messageCount", "modelUsage", "models", "notionalCostUsd", "project",
-      "sessionId", "totals", "user",
+      "activeTimeHours", "agentRole", "day", "epicKey", "epicSummary", "gitBranch", "jiraKey",
+      "messageCount", "modelUsage", "models", "notionalCostUsd", "parentSessionId",
+      "project", "provider", "rootSessionId", "sessionId", "totals", "user",
     ],
   );
 });

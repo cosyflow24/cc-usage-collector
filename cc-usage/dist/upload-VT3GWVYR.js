@@ -3,7 +3,7 @@ import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);
 import {
   isWorkAccount
-} from "./chunk-V5XEBEJS.js";
+} from "./chunk-NEB74BZI.js";
 
 // src/upload.ts
 function wireTotals(t) {
@@ -20,7 +20,11 @@ function wireModelUsage(m) {
 }
 function wireSession(s) {
   return {
+    provider: s.provider,
     sessionId: s.sessionId,
+    parentSessionId: s.parentSessionId,
+    rootSessionId: s.rootSessionId,
+    agentRole: s.agentRole,
     user: s.user,
     project: s.project,
     gitBranch: s.gitBranch,

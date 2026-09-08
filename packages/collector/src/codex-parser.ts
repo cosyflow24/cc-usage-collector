@@ -1,0 +1,380 @@
+import { createReadStream } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+import { createInterface } from "node:readline";
+import type { EventKind, UsageRecord } from "./types.ts";
+
+const MAX_LINE_LEN = 1_000_000;
+
+interface TokenDelta {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+interface CumulativeSnapshot {
+  totalInputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+interface SessionMeta {
+  sessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  agentRole: string | null;
+  cwd: string | null;
+}
+
+interface JsonRow {
+  ordinal: number;
+  value: Record<string, unknown>;
+}
+
+interface RolloutHeader {
+  file: string;
+  sessionId: string | null;
+  embeddedParentId: string | null;
+  hasExplicitHistoryBoundary: boolean;
+}
+
+const FILE_CONCURRENCY = 16;
+
+export function codexSessionsDir(): string {
+  const base = process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
+  return path.join(base, "sessions");
+}
+
+async function listLogFiles(dir: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      process.stderr.write(`warning: cannot read ${dir}: ${String(error)}\n`);
+    }
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...(await listLogFiles(full)));
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(full);
+  }
+  return files;
+}
+
+function nonNegative(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** Codex input_tokens includes cached/write tokens; split it without double-counting. */
+function normalizeSnapshot(value: unknown): CumulativeSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const totalInput = nonNegative(row.input_tokens);
+  const output = nonNegative(row.output_tokens);
+  if (totalInput === null || output === null) return null;
+  const requestedRead = nonNegative(row.cached_input_tokens) ?? 0;
+  const cacheRead = Math.min(totalInput, requestedRead);
+  const requestedWrite = nonNegative(row.cache_write_input_tokens) ?? 0;
+  const cacheCreation = Math.min(totalInput - cacheRead, requestedWrite);
+  return {
+    totalInputTokens: totalInput,
+    outputTokens: output,
+    cacheCreationTokens: cacheCreation,
+    cacheReadTokens: cacheRead,
+  };
+}
+
+function snapshotAsDelta(snapshot: CumulativeSnapshot): TokenDelta {
+  return {
+    inputTokens:
+      snapshot.totalInputTokens - snapshot.cacheReadTokens - snapshot.cacheCreationTokens,
+    outputTokens: snapshot.outputTokens,
+    cacheCreationTokens: snapshot.cacheCreationTokens,
+    cacheReadTokens: snapshot.cacheReadTokens,
+  };
+}
+
+function deltaSnapshot(
+  current: CumulativeSnapshot,
+  previous: CumulativeSnapshot | null,
+): TokenDelta | null {
+  if (!previous) return snapshotAsDelta(current);
+  const inputDelta = current.totalInputTokens - previous.totalInputTokens;
+  const outputDelta = current.outputTokens - previous.outputTokens;
+  // Only authoritative aggregate counters identify a new cumulative segment.
+  // Cache/fresh categories can be reclassified between snapshots while the
+  // aggregate remains monotonic; treating that as a reset double-counts usage.
+  if (inputDelta < 0 || outputDelta < 0) return null;
+  const cacheReadTokens = Math.min(
+    inputDelta,
+    Math.max(0, current.cacheReadTokens - previous.cacheReadTokens),
+  );
+  const cacheCreationTokens = Math.min(
+    inputDelta - cacheReadTokens,
+    Math.max(0, current.cacheCreationTokens - previous.cacheCreationTokens),
+  );
+  return {
+    inputTokens: inputDelta - cacheReadTokens - cacheCreationTokens,
+    outputTokens: outputDelta,
+    cacheCreationTokens,
+    cacheReadTokens,
+  };
+}
+
+function responseKind(payload: unknown): EventKind | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (p.type === "message" && p.role === "user") return "prompt";
+  if (p.type === "message" && p.role === "assistant") return "answer";
+  if (p.type === "function_call" || p.type === "custom_tool_call") return "tool_use";
+  if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+    return "tool_result";
+  }
+  return null;
+}
+
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseMeta(payload: unknown): SessionMeta | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (typeof p.id !== "string" || !p.id) return null;
+  const rootSessionId = typeof p.session_id === "string" && p.session_id ? p.session_id : p.id;
+  return {
+    sessionId: p.id,
+    parentSessionId:
+      typeof p.parent_thread_id === "string" && p.parent_thread_id ? p.parent_thread_id : null,
+    rootSessionId,
+    agentRole: typeof p.agent_role === "string" && p.agent_role ? p.agent_role : null,
+    cwd: typeof p.cwd === "string" && p.cwd ? p.cwd : null,
+  };
+}
+
+async function* readJsonRows(file: string): AsyncGenerator<JsonRow> {
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let ordinal = 0;
+  try {
+    for await (const line of lines) {
+      ordinal += 1;
+      if (!line || line.length > MAX_LINE_LEN) continue;
+      try {
+        const value = JSON.parse(line) as unknown;
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          yield { ordinal, value: value as Record<string, unknown> };
+        }
+      } catch {
+        // A truncated row must not make the rest of a rollout unreadable.
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+async function mapConcurrent<T, R>(
+  values: T[],
+  limit: number,
+  visit: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const output = new Array<R>(values.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await visit(values[index]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, () => worker()),
+  );
+  return output;
+}
+
+async function readRolloutHeader(file: string): Promise<RolloutHeader> {
+  const rows = readJsonRows(file);
+  const first = await rows.next();
+  const second = await rows.next();
+  await rows.return(undefined);
+
+  const firstValue = first.done ? null : first.value.value;
+  const secondValue = second.done ? null : second.value.value;
+  const firstPayload =
+    firstValue?.type === "session_meta" && firstValue.payload && typeof firstValue.payload === "object"
+      ? firstValue.payload as Record<string, unknown>
+      : null;
+  const ownMeta = firstPayload ? parseMeta(firstPayload) : null;
+  const embeddedMeta = secondValue?.type === "session_meta"
+    ? parseMeta(secondValue.payload)
+    : null;
+
+  return {
+    file,
+    sessionId: ownMeta?.sessionId ?? null,
+    embeddedParentId: embeddedMeta?.sessionId ?? null,
+    hasExplicitHistoryBoundary:
+      firstPayload !== null && "subagent_history_start_ordinal" in firstPayload,
+  };
+}
+
+function historySignature(row: Record<string, unknown>): string {
+  // Old Codex subagent rollouts copy the parent's payloads with rewritten
+  // timestamps. Compare only the semantic row so that copied history can be
+  // identified without reading or retaining prompt text outside this process.
+  return JSON.stringify({ type: row.type, payload: row.payload });
+}
+
+async function embeddedHistoryEndOrdinal(childFile: string, parentFile: string): Promise<number> {
+  const childRows = readJsonRows(childFile);
+  const parentRows = readJsonRows(parentFile);
+  try {
+    // Child: own session_meta, embedded parent session_meta, copied parent rows.
+    // Parent: own session_meta, then the source rows copied into the child.
+    await childRows.next();
+    await childRows.next();
+    await parentRows.next();
+
+    let lastMatchedChildOrdinal = 0;
+    while (true) {
+      const [child, parent] = await Promise.all([childRows.next(), parentRows.next()]);
+      if (child.done || parent.done) break;
+      if (historySignature(child.value.value) !== historySignature(parent.value.value)) break;
+      lastMatchedChildOrdinal = child.value.ordinal;
+    }
+    return lastMatchedChildOrdinal;
+  } finally {
+    await Promise.all([childRows.return(undefined), parentRows.return(undefined)]);
+  }
+}
+
+function makeRecord(
+  meta: SessionMeta,
+  timestamp: Date,
+  model: string | null,
+  cwd: string | null,
+  kind: EventKind,
+  tokens: TokenDelta,
+  dedupeKey: string,
+): UsageRecord {
+  return {
+    provider: "codex",
+    sessionId: meta.sessionId,
+    parentSessionId: meta.parentSessionId,
+    rootSessionId: meta.rootSessionId,
+    agentRole: meta.agentRole,
+    timestamp,
+    model,
+    cwd: cwd ?? meta.cwd,
+    gitBranch: null,
+    dedupeKey,
+    kind,
+    ...tokens,
+  };
+}
+
+async function parseFile(
+  file: string,
+  since: Date,
+  until: Date,
+  skipThroughOrdinal = 0,
+): Promise<UsageRecord[]> {
+  const records: UsageRecord[] = [];
+  let meta: SessionMeta | null = null;
+  let model: string | null = null;
+  let cwd: string | null = null;
+  let previous: CumulativeSnapshot | null = null;
+  for await (const { ordinal, value: row } of readJsonRows(file)) {
+    if (row.type === "session_meta") {
+      // A subagent rollout starts with its own metadata, then embeds one or more
+      // parent-history session_meta rows. The filename and all following live
+      // events belong to the first id; replacing it would collapse child usage
+      // into the parent session and corrupt task/thread attribution.
+      if (!meta) meta = parseMeta(row.payload);
+      continue;
+    }
+    if (!meta) continue;
+    if (row.type === "turn_context" && row.payload && typeof row.payload === "object") {
+      const payload = row.payload as Record<string, unknown>;
+      if (typeof payload.model === "string" && payload.model) model = payload.model;
+      if (typeof payload.cwd === "string" && payload.cwd) cwd = payload.cwd;
+      continue;
+    }
+    const timestamp = parseDate(row.timestamp);
+    if (!timestamp) continue;
+    const inRange = timestamp >= since && timestamp <= until;
+    if (row.type === "response_item") {
+      const kind = responseKind(row.payload);
+      if (kind && inRange && ordinal > skipThroughOrdinal) {
+        records.push(makeRecord(meta, timestamp, model, cwd, kind, {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        }, `codex:${meta.sessionId}:${ordinal}`));
+      }
+      continue;
+    }
+    if (row.type !== "event_msg" || !row.payload || typeof row.payload !== "object") continue;
+    const payload = row.payload as Record<string, unknown>;
+    if (payload.type !== "token_count" || !payload.info || typeof payload.info !== "object") continue;
+    const snapshot = normalizeSnapshot(
+      (payload.info as Record<string, unknown>).total_token_usage,
+    );
+    if (!snapshot) continue;
+    // Codex can reset cumulative counters after compaction. A decrease starts a
+    // new cumulative segment; count the new segment's current snapshot instead
+    // of dropping it (and every later snapshot below the old high-water mark).
+    const delta = deltaSnapshot(snapshot, previous) ?? snapshotAsDelta(snapshot);
+    previous = snapshot;
+    if (
+      ordinal <= skipThroughOrdinal ||
+      !inRange ||
+      Object.values(delta).every((v) => v === 0)
+    ) continue;
+    records.push(makeRecord(
+      meta,
+      timestamp,
+      model,
+      cwd,
+      "answer",
+      delta,
+      `codex:${meta.sessionId}:tokens:${ordinal}`,
+    ));
+  }
+  return records;
+}
+
+export async function readCodexRecords(
+  since: Date,
+  until: Date,
+  dir = codexSessionsDir(),
+): Promise<UsageRecord[]> {
+  const files = await listLogFiles(dir);
+  const headers = await mapConcurrent(files, FILE_CONCURRENCY, readRolloutHeader);
+  const bySessionId = new Map(
+    headers.flatMap((header) => header.sessionId ? [[header.sessionId, header.file] as const] : []),
+  );
+  const historyEnds = new Map<string, number>();
+  await mapConcurrent(headers, FILE_CONCURRENCY, async (header) => {
+    if (header.hasExplicitHistoryBoundary || !header.embeddedParentId) return;
+    const parentFile = bySessionId.get(header.embeddedParentId);
+    if (!parentFile || parentFile === header.file) return;
+    const historyEnd = await embeddedHistoryEndOrdinal(header.file, parentFile);
+    if (historyEnd > 0) historyEnds.set(header.file, historyEnd);
+  });
+  const nested = await mapConcurrent(files, FILE_CONCURRENCY, (file) =>
+    parseFile(file, since, until, historyEnds.get(file) ?? 0));
+  return nested.flat();
+}

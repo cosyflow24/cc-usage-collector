@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Unified cc-usage CLI. One dependency-free ESM entry point over the collector
-// bundle + OS-keyring credentials + the Claude Code hooks. Mirrors nnb-jira's
+// bundle + OS-keyring credentials + the Claude Code/Codex hooks. Mirrors nnb-jira's
 // tools/jira.mjs packaging (dispatch, options(), hiddenQuestion(), launcher).
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, platform } from "node:os";
@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   STATE_DIR, DEFAULT_INGEST_URL, jsonConfigFile, readConfig, writeConfig, readOauthEmail,
+  readCodexOauthEmail,
   resolverPath, registryFile,
 } from "./core/config.mjs";
 import {
@@ -18,14 +19,15 @@ import {
   installLauncher, launcherPath, ownsLauncher,
 } from "./core/launcher.mjs";
 import {
-  loadCredentials, runCollector, bundlePath,
+  loadCredentials, runCollector, runCollectorDetached, bundlePath,
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
 import { verifyToken } from "./core/verify.mjs";
+import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
-const VERSION = "0.5.0";
+const VERSION = "0.7.0";
 const out = (value = "") => process.stdout.write(`${value}\n`);
 const fail = (message, code = 1) => { const e = new Error(message); e.exitCode = code; throw e; };
 const need = (value, message) => value || fail(message);
@@ -107,9 +109,15 @@ async function login(args) {
   } else if (check.enrolledEmails.length) {
     out(`Token verified — uploads as: ${check.enrolledEmails.join(", ")}`);
   }
-  const email = cfg.email || readOauthEmail() || "default"; // stable, non-empty keyring account
+  const email = cfg.email || check.enrolledEmails[0] || readOauthEmail() || readCodexOauthEmail() || "default";
   const where = storeToken(email, token);
-  writeConfig({ ingestUrl, email, project: cfg.project });
+  writeConfig({
+    ingestUrl,
+    email,
+    project: cfg.project,
+    user: cfg.user,
+    workDomain: cfg.workDomain,
+  });
   installLauncher();
   out(`\ncc-usage: token stored in ${where}. Usage now uploads on session end and daily.`);
   out("Run  cc-usage doctor  to verify, or  cc-usage sync  for an immediate upload.");
@@ -132,6 +140,55 @@ function task(args) {
   const [key, epic] = args.filter((a) => !a.startsWith("-"));
   if (!key) fail("usage: cc-usage task <last|none|KEY> [EPIC]");
   out(setTask(key, epic, process.cwd()));
+}
+
+async function sessions(args) {
+  const { positional, values } = options(args, { "--json": "!json" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage sessions <session-id|Jira-key|project> [--json]");
+  const found = await findSessions(selector);
+  if (values.json) {
+    out(JSON.stringify(found.map(({ file: _file, ...row }) => row), null, 2));
+    return;
+  }
+  if (!found.length) fail(`no local session found for ${selector}`, 2);
+  for (const row of found) {
+    out(`${row.provider}:${row.sessionId}\t${row.jira || "unassigned"}\t${row.cwd || "unknown"}\t${row.timestamp || ""}`);
+  }
+}
+
+async function context(args) {
+  const { positional, values } = options(args, { "--max-chars": "maxChars" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage context <session-id|Jira-key|project> [--max-chars N]");
+  const maxChars = values.maxChars === undefined ? undefined : Number(values.maxChars);
+  if (maxChars !== undefined && (!Number.isFinite(maxChars) || maxChars < 2000)) {
+    fail("--max-chars must be a number >= 2000");
+  }
+  out(await renderContext(selector, { maxChars }));
+}
+
+async function resume(args) {
+  const { positional, values } = options(args, { "--exec": "!exec" });
+  const selector = positional.join(" ").trim();
+  if (!selector) fail("usage: cc-usage resume <session-id|Jira-key|project> [--exec]");
+  const found = await findSessions(selector);
+  if (!found.length) fail(`no local session found for ${selector}`, 2);
+  const session = found[0];
+  if (session.provider !== "codex") {
+    out(await renderContext(`claude:${session.sessionId}`));
+    process.stderr.write("Claude sessions cannot be resumed natively in Codex; local context was emitted instead.\n");
+    return;
+  }
+  if (!values.exec) {
+    out(`codex resume ${session.sessionId}`);
+    return;
+  }
+  if (process.env.CODEX_THREAD_ID) {
+    fail("cannot start a nested interactive Codex session; run the printed resume command in a terminal", 2);
+  }
+  const result = spawnSync("codex", ["resume", session.sessionId], { stdio: "inherit" });
+  if (result.status !== 0) fail(`codex resume exited ${result.status ?? 1}`, result.status ?? 1);
 }
 
 function burn() {
@@ -158,7 +215,10 @@ function contract() {
     schemaVersion: 1,
     name: "cc-usage",
     version: VERSION,
-    capabilities: ["collect", "sync", "task-attribution", "hooks", "burn", "keyring"],
+    capabilities: [
+      "collect", "sync", "task-attribution", "local-context", "codex-resume",
+      "hooks", "burn", "keyring",
+    ],
     state: { dir: STATE_DIR, schemaVersion: 1 },
   }, null, 2));
 }
@@ -212,10 +272,10 @@ async function doctor() {
   else out("     (launcher not installed — run cc-usage login or cc-usage refresh)");
 
   if (existsSync(resolverPath)) ok(`resolver ${resolverPath}`);
-  else nope(`resolver copy missing (${resolverPath}) — start a Claude session to regenerate`);
+  else nope(`resolver copy missing (${resolverPath}) — run cc-usage refresh from the installed plugin`);
   const runtime = resolveRuntime();
   if (runtime) ok(`runtime ${runtime.version} at ${runtime.root}`);
-  else nope("no valid plugin runtime registered — start a Claude session, or reinstall the plugin");
+  else nope("no valid plugin runtime registered — run cc-usage refresh, or reinstall the plugin");
 
   const legacyEnv = join(STATE_DIR, "env");
   if (existsSync(legacyEnv) && /CC_USAGE_INGEST_TOKEN=\S/.test(readFileSync(legacyEnv, "utf8"))) {
@@ -225,11 +285,11 @@ async function doctor() {
   if (existsSync(plist)) {
     const compat = join(STATE_DIR, "bin", "sync.sh");
     if (!existsSync(compat)) {
-      out("     LaunchAgent present; open one Claude session so the compat bin/sync.sh regenerates.");
+      out("     LaunchAgent present; run cc-usage refresh so the compat bin/sync.sh regenerates.");
     } else if (readFileSync(compat, "utf8").includes(resolverPath)) {
       out("     LaunchAgent present; bin/sync.sh points at the stable resolver.");
     } else {
-      nope("bin/sync.sh still points at a versioned path — start a Claude session to heal it");
+      nope("bin/sync.sh still points at a versioned path — run cc-usage refresh to heal it");
     }
   }
 
@@ -259,7 +319,7 @@ function runHook(sub, payload) {
   if (sub === "session-start") { const o = sessionStart(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "prompt-submit") { const o = promptSubmit(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "autoupdate-worker") { runUpdateWorker(); return; }
-  if (sub === "session-end") { runCollector(syncArgs("1", false), { quiet: true }); }
+  if (sub === "session-end") { runCollectorDetached(syncArgs("1", false)); }
 }
 
 function help(topic) {
@@ -269,6 +329,9 @@ function help(topic) {
   sync [--days N] [--dry-run]               upload the last N days of usage
   collect [collector args...]               run the analyzer directly (passthrough)
   task <last|none|KEY> [EPIC]               attribute this session to a Jira key
+  sessions <ID|KEY|project> [--json]        find matching Claude/Codex sessions
+  context <ID|KEY|project> [--max-chars N]  print local-only conversation context
+  resume <ID|KEY|project> [--exec]          print/run native Codex resume; import Claude context
   burn                                      live 5h rate-limit window view
   doctor                                    health check (no upload)
   config | contract | migrate               show config / capabilities / migrate token
@@ -306,6 +369,9 @@ async function main() {
   if (command === "sync") process.exit(sync(args));
   if (command === "collect") process.exit(collect(args));
   if (command === "task") return task(args);
+  if (command === "sessions") return sessions(args);
+  if (command === "context") return context(args);
+  if (command === "resume") return resume(args);
   if (command === "burn") return burn();
   if (command === "doctor") return doctor();
   if (command === "config") return showConfig();

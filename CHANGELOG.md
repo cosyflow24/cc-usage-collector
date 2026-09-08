@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- 修复按目录静默继承旧 task、忽略新消息的问题。单独编号自动记录；句子、链接、多编号及描述交由宿主按当前意图解析，目标明确时自动更新，无需外部模型或 Jira 凭据。
+- 恢复会话保留已选择的 task。目录历史仅为候选；保留不追踪和非交互模式。
+- 仍按整个会话的最新 task 归属，不自动拆分历史耗时。
+
 ## 0.7.0
 
 - The session-attribution prompt now names the ask-the-user tool the HOST

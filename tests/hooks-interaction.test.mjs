@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,81 +32,106 @@ function runPromptSubmit(base, payload, { env = {} } = {}) {
   return JSON.parse(result.stdout || "null");
 }
 
-function seedDeclared(base, sid, jira, { ageHours = 0 } = {}) {
+function seedDeclared(base, sid, jira, { ageHours = 0, provider = "claude" } = {}) {
   // Mirror the tasks.jsonl row shape (schemaVersion 1).
   const dir = join(base, "claude", "cc-usage");
   mkdirSync(dir, { recursive: true });
   const ts = new Date(Date.now() - ageHours * 3600000).toISOString();
   writeFileSync(join(dir, "tasks.jsonl"),
-    `${JSON.stringify({ schemaVersion: 1, sessionId: sid, jira, cwd: base, ts, src: "test" })}\n`);
+    `${JSON.stringify({ schemaVersion: 1, provider, sessionId: sid, jira, cwd: base, ts, src: "test" })}\n`);
 }
 
-test("stale nudge is a non-blocking AskUserQuestion instruction", () => {
-  const base = mkdtempSync(join(tmpdir(), "ccu-hooks-"));
+const rows = (base) => {
+  try { return readFileSync(join(base, "claude", "cc-usage", "tasks.jsonl"), "utf8").trim().split("\n").map(JSON.parse); }
+  catch { return []; }
+};
+
+for (const provider of ["claude", "codex"]) {
+  test(`${provider}: standalone key replaces previous task without duplicating history`, () => {
+    const base = mkdtempSync(join(tmpdir(), "ccu-task-"));
+    try {
+      seedDeclared(base, "sid", "KI-123", { provider });
+      const env = { CODEX_THREAD_ID: provider === "codex" ? "sid" : "" };
+      const payload = { session_id: "sid", cwd: base, prompt: "bi-456" };
+      assert.equal(runPromptSubmit(base, payload, { env }), null);
+      assert.equal(rows(base).at(-1).jira, "BI-456");
+      assert.equal(rows(base).at(-1).provider, provider);
+      const count = rows(base).length;
+      runPromptSubmit(base, payload, { env });
+      assert.equal(rows(base).length, count);
+      assert.equal(JSON.stringify(rows(base)).includes("prompt" + '\":'), false);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+}
+
+for (const prompt of [
+  "帮我修复 BI-456", "处理 https://jira.example/browse/BI-456",
+  "不要做 KI-123，改做 BI-456", "不要做 BI-456",
+  "比较 KI-123 和 BI-456", "改做我们刚讨论的登录修复",
+]) {
+  test(`host interprets current request without blindly rebinding: ${prompt}`, () => {
+    const base = mkdtempSync(join(tmpdir(), "ccu-task-"));
+    try {
+      seedDeclared(base, "sid", "KI-123");
+      const out = runPromptSubmit(base, { session_id: "sid", cwd: base, prompt });
+      const context = out.hookSpecificOutput.additionalContext;
+      assert.equal(out.decision, undefined);
+      assert.match(context, /CURRENT user request/);
+      assert.match(context, /automatically/);
+      assert.match(context, /never invent a Jira key/);
+      assert.match(context, /negated tasks/);
+      if (prompt.includes("BI-456")) assert.match(context, /Candidate keys.*BI-456/);
+      assert.equal(rows(base).length, 1);
+      assert.equal(rows(base)[0].jira, "KI-123");
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+}
+
+test("Codex semantic clarification uses its own tool", () => {
+  const base = mkdtempSync(join(tmpdir(), "ccu-task-"));
   try {
-    seedDeclared(base, "sid-1", "KI-123", { ageHours: 30 });
-    const out = runPromptSubmit(base, { session_id: "sid-1", cwd: base, prompt: "hello" });
-    assert.ok(out, "expected a nudge");
-    assert.equal(out.decision, undefined, "must not block");
-    const context = out.hookSpecificOutput?.additionalContext || "";
-    assert.match(context, /Stale attribution/);
-    assert.match(context, /AskUserQuestion/);
-    assert.match(context, /KI-123/);
-    assert.match(context, /task none/);
-    // Asked at most once per day: second call stays silent.
-    const again = runPromptSubmit(base, { session_id: "sid-1", cwd: base, prompt: "hello again" });
-    assert.equal(again, null);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+    const out = runPromptSubmit(base, { session_id: "sid", cwd: base, prompt: "下一项" },
+      { env: { CODEX_THREAD_ID: "sid" } });
+    assert.match(out.hookSpecificOutput.additionalContext, /request_user_input/);
+    assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /AskUserQuestion/);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });
 
-test("unattributed backstop instructs AskUserQuestion instead of blocking", () => {
-  const base = mkdtempSync(join(tmpdir(), "ccu-hooks-"));
-  try {
-    // Burn the grace prompts, then expect the single AskUserQuestion backstop.
-    let out = null;
-    for (let i = 0; i < 4; i += 1) {
-      out = runPromptSubmit(base, { session_id: "sid-2", cwd: base, prompt: `p${i}` });
-      if (out) break;
-    }
-    assert.ok(out, "expected the backstop nudge after grace");
-    assert.equal(out.decision, undefined, "must not block");
-    const context = out.hookSpecificOutput?.additionalContext || "";
-    assert.match(context, /not attributed/);
-    assert.match(context, /AskUserQuestion/);
-    assert.match(context, /None/);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test("headless sessions get no nudges at all", () => {
-  const base = mkdtempSync(join(tmpdir(), "ccu-hooks-"));
-  try {
-    seedDeclared(base, "sid-3", "KI-123", { ageHours: 48 });
-    const out = runPromptSubmit(base, { session_id: "sid-3", cwd: base, prompt: "hello" },
-      { env: { CLAUDE_HEADLESS: "1", CI: "1" } });
-    assert.equal(out, null);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test("legacy Claude none markers remain silent after the provider upgrade", () => {
-  const base = mkdtempSync(join(tmpdir(), "ccu-hooks-"));
-  try {
-    const asked = join(base, "claude", "cc-usage", "asked");
-    mkdirSync(asked, { recursive: true });
-    writeFileSync(join(asked, "legacy-sid"), new Date().toISOString());
-    for (let i = 0; i < 4; i += 1) {
-      const out = runPromptSubmit(
-        base,
-        { session_id: "legacy-sid", cwd: base, prompt: `hello ${i}` },
-      );
+for (const mode of ["none", "legacy-none", "headless", "slash", "scope"]) {
+  test(`${mode} remains silent and writes no task`, () => {
+    const base = mkdtempSync(join(tmpdir(), "ccu-task-"));
+    try {
+      const asked = join(base, "claude", "cc-usage", "asked");
+      mkdirSync(asked, { recursive: true });
+      if (mode.includes("none")) writeFileSync(join(asked, mode === "none" ? "claude-sid" : "sid"), "skip");
+      const env = { CODEX_THREAD_ID: "", ...(mode === "headless" ? { CC_USAGE_HEADLESS: "1" } : {}),
+        ...(mode === "scope" ? { CC_USAGE_PROJECT: "another-project" } : {}) };
+      const out = runPromptSubmit(base, { session_id: "sid", cwd: base,
+        prompt: mode === "slash" ? "/task BI-456" : "BI-456" }, { env });
       assert.equal(out, null);
-    }
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
+      assert.equal(rows(base).length, 0);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+}
+
+for (const resumed of [false, true]) {
+  test(`session start ${resumed ? "preserves explicit selection" : "does not inherit another session's task"}`, () => {
+    const base = mkdtempSync(join(tmpdir(), "ccu-start-"));
+    try {
+      seedDeclared(base, resumed ? "sid" : "old-sid", "KI-123");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+        const { sessionStart } = await import(${JSON.stringify(`file://${hooksModule}`)});
+        process.stdout.write(JSON.stringify(sessionStart({session_id:"sid",cwd:${JSON.stringify(base)}})));
+      `], { encoding: "utf8", env: { ...process.env,
+        CLAUDE_CONFIG_DIR: join(base, "claude"), CODEX_HOME: join(base, "codex"),
+        CC_USAGE_CONFIG_DIR: join(base, "config"), CC_USAGE_CONFIG_FILE: join(base, "config", "config.json"),
+        CC_USAGE_BIN_DIR: join(base, "bin"), CC_USAGE_NO_AUTOUPDATE: "1", CODEX_THREAD_ID: "",
+        CC_JIRA: resumed ? "BI-456" : "", CC_EPIC: "", CC_USAGE_PROJECT: "",
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(rows(base).filter((r) => r.jira).length, 1);
+      assert.equal(rows(base)[0].jira, "KI-123");
+      assert.match(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, /not evidence/);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+}

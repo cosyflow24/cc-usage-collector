@@ -135,3 +135,32 @@ for (const resumed of [false, true]) {
     } finally { rmSync(base, { recursive: true, force: true }); }
   });
 }
+
+// The attribution context is a CONTRACT with the host model, not prose. These
+// clauses are the ones that keep an unattributed session from turning into
+// either an invented key or an unrequested Jira issue, so they get a guard.
+test("unattributed sessions are offered a search, but never an autonomous issue creation", () => {
+  const base = mkdtempSync(join(tmpdir(), "ccu-search-"));
+  try {
+    const out = runPromptSubmit(base, {
+      session_id: "sid-search",
+      cwd: base,
+      prompt: "bau mir bitte den neuen Report für die Retouren",
+    });
+    const context = out.hookSpecificOutput.additionalContext;
+    // A search is allowed, once, and only read-only.
+    assert.match(context, /search the issue tracker ONCE/);
+    assert.match(context, /read-only/);
+    // A hit must be confirmed, never silently recorded.
+    assert.match(context, /SUGGESTION, never a binding/);
+    // Filing an issue is an outward action: user approval, never automatic.
+    assert.match(context, /Never create an issue on your own/);
+    // Not tracking must read as a legitimate outcome, or the model will keep
+    // pushing for a key that does not exist.
+    assert.match(context, /legitimate outcome, not a failure/);
+    // And the pre-existing floor still holds.
+    assert.match(context, /never invent a Jira key/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

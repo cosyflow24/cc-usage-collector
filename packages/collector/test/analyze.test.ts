@@ -615,3 +615,96 @@ test("a non-contiguous switch keeps each visit's own identity evidence", () => {
   assert.ok(users.includes("a@nnb24.de"), `verified return visit lost: ${users.join(", ")}`);
   assert.ok(users.includes("b@nnb24.de"));
 });
+
+test("merging two visits keeps the LATER visit's project and task", () => {
+  // buildSession resolves cwd/branch/task as "latest non-null wins". A merge
+  // must not undo that: the merged row carries the later visit's tokens, so
+  // reporting them under the earlier visit's Jira key attributes real work to
+  // the wrong task.
+  const mk = (iso: string, cwd: string, branch: string): UsageRecord => ({
+    ...rec("s-meta", iso), provider: "codex", model: "gpt-5.6-sol", cwd, gitBranch: branch,
+  });
+  const result = analyze(
+    [
+      // Spaced UNDER idleGapMs so the fixture actually has active time; a
+      // wider gap counts as away and every assertion about hours is vacuous.
+      mk("2026-07-13T10:05:00", "/w/old", "feat/BI-1"),
+      mk("2026-07-13T10:20:00", "/w/old", "feat/BI-1"),
+      mk("2026-07-13T10:35:00", "/w/mid", "feat/BI-2"),
+      mk("2026-07-13T10:50:00", "/w/mid", "feat/BI-2"),
+      mk("2026-07-13T11:35:00", "/w/new", "feat/BI-3"),
+      mk("2026-07-13T11:50:00", "/w/new", "feat/BI-3"),
+    ],
+    {
+      user: "fallback@nnb24.de",
+      providerUsers: { claude: "c@nnb24.de", codex: null },
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+      sessionAccounts: new Map([[
+        "codex:s-meta",
+        [
+          { account: "a@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+          { account: "b@nnb24.de", ts: new Date("2026-07-13T10:30:00").toISOString() },
+          { account: "a@nnb24.de", ts: new Date("2026-07-13T11:30:00").toISOString() },
+        ],
+      ]]),
+    },
+  );
+  // All three visits fail closed to the same unverified Codex identity, so they
+  // merge into one row.
+  assert.equal(result.sessions.length, 1);
+  const merged = result.sessions[0]!;
+  assert.equal(merged.project, "new", "the latest visit's project must win");
+  assert.equal(merged.gitBranch, "feat/BI-3", "the latest visit's branch must win");
+  assert.equal(merged.messageCount, 6, "every visit's messages are counted");
+
+  // Cost and per-model tokens must ACCUMULATE across the merged visits, not be
+  // taken from whichever segment landed first.
+  const unsplit = analyze(
+    [
+      // Spaced UNDER idleGapMs so the fixture actually has active time; a
+      // wider gap counts as away and every assertion about hours is vacuous.
+      mk("2026-07-13T10:05:00", "/w/old", "feat/BI-1"),
+      mk("2026-07-13T10:20:00", "/w/old", "feat/BI-1"),
+      mk("2026-07-13T10:35:00", "/w/mid", "feat/BI-2"),
+      mk("2026-07-13T10:50:00", "/w/mid", "feat/BI-2"),
+      mk("2026-07-13T11:35:00", "/w/new", "feat/BI-3"),
+      mk("2026-07-13T11:50:00", "/w/new", "feat/BI-3"),
+    ],
+    {
+      user: "fallback@nnb24.de",
+      providerUsers: { claude: "c@nnb24.de", codex: null },
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+    },
+  ).sessions[0]!;
+  assert.equal(merged.totals.totalTokens, unsplit.totals.totalTokens,
+    "merged tokens must equal the unsplit session's");
+  assert.equal(
+    Math.round(merged.notionalCostUsd * 1e6), Math.round(unsplit.notionalCostUsd * 1e6),
+    "merged cost must equal the unsplit session's",
+  );
+  // Internal consistency, which holds even where the model has no price (Codex
+  // subscription usage reports 0): the row total must equal the sum of its own
+  // per-model rows. Comparing only against the unsplit run is vacuous at 0.
+  assert.equal(
+    Math.round(merged.notionalCostUsd * 1e6),
+    Math.round(merged.modelUsage.reduce((a, m) => a + m.costUsd, 0) * 1e6),
+    "the merged row's cost must equal the sum of its own model rows",
+  );
+  assert.equal(
+    merged.totals.totalTokens,
+    merged.modelUsage.reduce((a, m) => a + m.totalTokens, 0),
+    "the merged row's tokens must equal the sum of its own model rows",
+  );
+  const mu = merged.modelUsage.find((m) => m.model === "gpt-5.6-sol")!;
+  const uu = unsplit.modelUsage.find((m) => m.model === "gpt-5.6-sol")!;
+  assert.equal(mu.totalTokens, uu.totalTokens, "per-model tokens must accumulate");
+  assert.equal(Math.round(mu.costUsd * 1e6), Math.round(uu.costUsd * 1e6),
+    "per-model cost must accumulate");
+  assert.ok(merged.activeTimeHours > 0, "merged hours must not be dropped");
+});

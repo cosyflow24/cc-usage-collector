@@ -361,7 +361,21 @@ function mergeInto(target: SessionSummary, extra: SessionSummary): void {
     target.totals[f] += extra.totals[f];
   }
   target.messageCount += extra.messageCount;
+  // NOT covered by a test, deliberately noted rather than faked: a merge only
+  // happens when two segments resolve to the same user, which today only occurs
+  // for UNVERIFIED Codex segments — and pricing.ts returns 0 for every Codex
+  // model, so both operands are always 0. Kept because it is correct if either
+  // of those facts changes; do not read the green suite as proof of this line.
   target.notionalCostUsd += extra.notionalCostUsd;
+  // buildSession resolves cwd/branch/task as "latest non-null wins". `extra` is
+  // the LATER visit, so its values must win here too — otherwise a merged row
+  // carries the later visit's tokens under the earlier visit's project and Jira
+  // key, and the work is reported against the wrong task.
+  if (extra.project) target.project = extra.project;
+  if (extra.gitBranch) target.gitBranch = extra.gitBranch;
+  if (extra.jiraKey) target.jiraKey = extra.jiraKey;
+  if (extra.epicKey) target.epicKey = extra.epicKey;
+  if (extra.epicSummary) target.epicSummary = extra.epicSummary;
   const byModel = new Map(target.modelUsage.map((m) => [m.model, m]));
   for (const m of extra.modelUsage) {
     const cur = byModel.get(m.model);
@@ -393,8 +407,8 @@ function apportionModels(
   segments: { recs: UsageRecord[] }[],
   models: ModelUsage[],
 ): Map<string, TokenTotals>[] {
-  const fields = [
-    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "totalTokens",
+  const components = [
+    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens",
   ] as const;
   const out: Map<string, TokenTotals>[] = segments.map(() => new Map());
 
@@ -420,7 +434,10 @@ function apportionModels(
       inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0,
       cacheReadTokens: 0, totalTokens: 0,
     }));
-    for (const field of fields) {
+    // totalTokens is DERIVED from the components below, never apportioned on its
+    // own: rounding it separately let a row report total=1 while its own parts
+    // added to 2, and the server stores both.
+    for (const field of components) {
       const total = model[field];
       const exact = share.map((f) => total * f);
       const floors = exact.map((x) => Math.floor(x));
@@ -438,7 +455,8 @@ function apportionModels(
       give.forEach((v, i) => { totals[i]![field] = v; });
     }
     totals.forEach((t, i) => {
-      if (fields.some((f) => t[f] > 0)) out[i]!.set(model.model, t);
+      t.totalTokens = t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens;
+      if (t.totalTokens > 0) out[i]!.set(model.model, t);
     });
   }
   return out;

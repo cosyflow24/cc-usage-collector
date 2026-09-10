@@ -4,15 +4,15 @@
 // can still be recommended, by title. Everything here runs against a sandboxed
 // CLAUDE_CONFIG_DIR and a fake `nnb-jira`; the real gateway, the real
 // ~/.claude, and the real host CLIs are never touched.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, existsSync, writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const issuesModule = join(repoRoot, "cc-usage", "tools", "core", "issues.mjs");
@@ -41,6 +41,9 @@ function runIn(sb, body, env = {}) {
       CC_USAGE_CODEX_BIN: "/nonexistent/codex",
       CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
       CC_USAGE_NO_ISSUE_CACHE: "",
+      // These probes inject their own `spawn` and observe the decision through
+      // it, so the log seam must stay OUT of their way.
+      CC_USAGE_ISSUE_REFRESH_LOG: "",
       ...env,
     },
   });
@@ -552,4 +555,114 @@ test("claiming an hour bucket prunes issue-refresh markers older than 48 h", () 
     assert.ok(existsSync(join(asked, "autoupdate-2020-01-01")), "another feature's marker is not ours to delete");
     assert.ok(existsSync(join(asked, "claude-some-session")), "a not-tracked marker must never be pruned");
   } finally { rmSync(sb, { recursive: true, force: true }); }
+});
+
+// ============================================================================
+// Cross-model review round 2. A `npm test` run left exactly one real detached
+// `cc-usage.mjs hook issues-refresh` child alive — which, on a machine that HAS
+// nnb-jira, means an unrelated unit test was firing a live query at the company
+// Jira. A detached child outlives the assertion that would have caught it, so
+// the decision to spawn is observed through CC_USAGE_ISSUE_REFRESH_LOG instead.
+// ============================================================================
+
+const spawnLog = (sb) => join(sb, "would-have-spawned.log");
+const loggedSpawns = (sb) => {
+  try { return readFileSync(spawnLog(sb), "utf8").split("\n").filter(Boolean); }
+  catch { return []; }
+};
+
+test("the log seam observes the spawn decision without starting anything", () => {
+  const sb = sandbox();
+  try {
+    // No cache at all + a gateway present: this IS the case that spawns.
+    const out = runIn(sb, `
+      const calls = [];
+      const spawn = () => { calls.push("SPAWNED"); return { on() {}, unref() {} }; };
+      const scheduled = issues.scheduleRefresh({ spawn });
+      process.stdout.write(JSON.stringify({ scheduled, calls }));
+    `, { CC_USAGE_NNB_JIRA_BIN: fakeJira, CC_USAGE_ISSUE_REFRESH_LOG: spawnLog(sb) });
+    assert.equal(out.scheduled, true, "the refresh was still decided");
+    assert.deepEqual(out.calls, [], "but nothing was started, not even the injected spawn");
+    const lines = loggedSpawns(sb);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /cc-usage\.mjs hook issues-refresh$/);
+    assert.ok(lines[0].startsWith(join(sb, "cc-usage")), "the line names the sandbox that decided");
+  } finally { rmSync(sb, { recursive: true, force: true }); }
+});
+
+test("no ordinary SessionStart configuration starts a detached refresh", () => {
+  for (const [label, env, expected] of [
+    ["a fresh cache", {}, 0],
+    ["the opt-out", { CC_USAGE_NO_ISSUE_CACHE: "1" }, 0],
+    ["no gateway on the machine", { CC_USAGE_NNB_JIRA_BIN: "" }, 0],
+    // The positive control: without it the three zeros above could all be a
+    // seam that simply never fires.
+    ["a stale cache and a real gateway", { CC_USAGE_NNB_JIRA_BIN: fakeJira, stale: true }, 1],
+  ]) {
+    const sb = sandbox();
+    try {
+      seedCache(sb, ISSUES, env.stale ? { ageMs: 7 * 3600_000 } : {});
+      delete env.stale;
+      runSessionStart(sb, { env: { ...env, CC_USAGE_ISSUE_REFRESH_LOG: spawnLog(sb) } });
+      assert.equal(loggedSpawns(sb).length, expected, `${label}: wrong number of refresh decisions`);
+    } finally { rmSync(sb, { recursive: true, force: true }); }
+  }
+});
+
+// The real leak came from packages/collector/test, not from this directory, so
+// the guard has to be repo-wide. A suite that starts a SessionStart child on a
+// developer machine WITH nnb-jira installed will otherwise query Jira for real.
+test("every suite that starts a SessionStart child pins the Jira gateway", () => {
+  const suites = [];
+  const walk = (dir, depth = 0) => {
+    if (depth > 4) return;
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full, depth + 1); continue; }
+      if (!/\.(test\.)?(mjs|ts)$/.test(entry.name)) continue;
+      const body = readFileSync(full, "utf8");
+      // A child process that runs the SessionStart hook, either through the CLI
+      // or by importing the module.
+      if (!/hook",\s*"session-start|hook session-start|\bsessionStart\s*\(/.test(body)) continue;
+      if (!/spawnSync|execFileSync|\bspawn\(/.test(body)) continue;
+      suites.push([full, /CC_USAGE_NNB_JIRA_BIN/.test(body)]);
+    }
+  };
+  walk(join(repoRoot, "tests"));
+  walk(join(repoRoot, "packages"));
+
+  assert.ok(suites.length >= 3, `expected to find the SessionStart suites, found ${suites.length}`);
+  const unpinned = suites.filter(([, pinned]) => !pinned).map(([file]) => file);
+  assert.deepEqual(unpinned, [],
+    "these suites run SessionStart without pinning CC_USAGE_NNB_JIRA_BIN, so on a machine "
+    + "with nnb-jira installed they spawn a detached child that queries the real Jira");
+});
+
+// Last line of defense: nothing this file started may still be running when it
+// ends. Scoped to sandboxes under the OS temp dir, so a refresh the developer's
+// own session legitimately started is never mistaken for a leak.
+after(() => {
+  if (platform() === "win32") return;
+  let out = "";
+  try {
+    out = execFileSync("ps", ["-eo", "pid=,command="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch { return; } // best effort: no ps, no guard
+  const leaked = [];
+  for (const line of out.split("\n")) {
+    // Match the ARGV exactly. Matching the phrase "hook issues-refresh" anywhere
+    // in a command line also matches any agent or editor process that merely
+    // mentions it — which is how this leak first looked like two leaks.
+    const m = /^\s*(\d+)\s+(\S+)\s+(\S*cc-usage\.mjs) hook issues-refresh\s*$/.exec(line);
+    if (!m || !/(^|\/)node$/.test(m[2])) continue;
+    let env = "";
+    try { env = execFileSync("ps", ["eww", "-p", m[1]], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
+    catch { continue; } // already exited
+    if (env.includes(`CLAUDE_CONFIG_DIR=${tmpdir()}`) || / CLAUDE_CONFIG_DIR=\/(var|tmp)\/\S*ccu-issues-/.test(env)) {
+      leaked.push(m[1]);
+    }
+  }
+  assert.deepEqual(leaked, [], `a detached refresh child escaped this test file: pids ${leaked.join(", ")}`);
 });

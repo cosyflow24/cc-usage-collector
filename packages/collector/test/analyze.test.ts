@@ -164,6 +164,11 @@ test("sidecar identity source flows through loader into fail-closed analysis", (
         CLAUDE_CONFIG_DIR: claudeDir,
         CODEX_HOME: codexDir,
         CODEX_THREAD_ID: "verified",
+        // SessionStart schedules a DETACHED open-issue refresh. Unpinned, this
+        // test found the developer's real nnb-jira on PATH and fired a live
+        // query at the company Jira, leaving a stray child behind every run.
+        CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
+        CC_USAGE_NO_ISSUE_CACHE: "1",
       },
     });
     assert.equal(captured.status, 0, captured.stderr);

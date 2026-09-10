@@ -18,7 +18,8 @@
 //
 // Opt out entirely with CC_USAGE_NO_ISSUE_CACHE=1.
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+  appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync,
+  unlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -229,8 +230,19 @@ export function scheduleRefresh({ spawn: spawnFn = spawn } = {}) {
   const marker = `${REFRESH_MARKER_PREFIX}${new Date().toISOString().slice(0, 13)}`;
   if (!claimMarker(marker)) return false;
   pruneRefreshMarkers(marker);
+  const argv = [process.execPath, ccUsageMjs, "hook", "issues-refresh"];
+  // Test-only seam. A detached child that escapes a test run is invisible to the
+  // test itself — it outlives the assertion by design — so there has to be a way
+  // to observe the DECISION to spawn without performing it. When this is set the
+  // would-be argv is appended and nothing is started.
+  const log = process.env.CC_USAGE_ISSUE_REFRESH_LOG;
+  if (log) {
+    // The state dir identifies WHICH sandbox decided to spawn.
+    try { appendFileSync(log, `${STATE_DIR} ${argv.join(" ")}\n`); } catch { /* best effort */ }
+    return true;
+  }
   try {
-    const child = spawnFn(process.execPath, [ccUsageMjs, "hook", "issues-refresh"], {
+    const child = spawnFn(argv[0], argv.slice(1), {
       detached: true, stdio: "ignore",
     });
     // spawn() reports EAGAIN and friends asynchronously; with no listener Node

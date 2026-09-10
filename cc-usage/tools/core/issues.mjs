@@ -111,11 +111,17 @@ export function readOpenIssues() {
   } catch { return null; }
 }
 
-/** A cache younger than the TTL. A missing or undated cache is never fresh. */
+/**
+ * A cache younger than the TTL. A missing or undated cache is never fresh, and
+ * neither is one dated in the FUTURE: after a clock rollback (VM restore, NTP
+ * correction, dual boot) the age goes negative, which is below any TTL, so the
+ * cache would have counted as fresh forever and quietly stopped refreshing.
+ */
 export function isFresh(cache, now = Date.now(), ttl = TTL_MS) {
   const at = Date.parse(cache?.fetchedAt || "");
   if (!Number.isFinite(at)) return false;
-  return now - at < ttl;
+  const age = now - at;
+  return age >= 0 && age < ttl;
 }
 
 // Written tmp+rename so a session start can never read a half-written cache,
@@ -189,6 +195,14 @@ export function refreshOpenIssues({
       // is a launcher: it starts jira.mjs, which starts `security`. Killing only
       // the process we spawned left those two alive after every timeout.
       detached: true,
+      // The gateway runs its OWN selfUpdate() at the start of every command,
+      // forking a detached worker into a SEPARATE process group with a five
+      // minute cap per step. killGroup() below can only reach our own group, so
+      // that worker would outlive a timed-out search no matter what we kill.
+      // The gateway documents this opt-out itself (hooks/self-update.mjs).
+      // Passing the whole environment through, not replacing it: the gateway
+      // still has to find its own config and credentials.
+      env: { ...process.env, NNB_JIRA_NO_AUTOUPDATE: "1" },
     });
     // Whether it timed out, was signalled, or failed, anything it started is
     // still ours to clean up.

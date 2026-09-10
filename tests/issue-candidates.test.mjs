@@ -794,3 +794,56 @@ test("a timed-out gateway takes its whole process group with it", () => {
     assert.equal(existsSync(cacheFile(sb)), false, "and nothing was written");
   } finally { rmSync(sb, { recursive: true, force: true }); }
 });
+
+// ============================================================================
+// Cross-model review cycle 3. Two findings about what we hand to, and believe
+// from, the outside world: the gateway's own background worker, and a clock.
+// ============================================================================
+
+// ---- P1: the gateway must not start its own detached updater ---------------
+// nnb-jira 2.6.15 calls selfUpdate() at the start of every command, which forks
+// a DETACHED worker into its OWN process group, capped at five minutes a step.
+// killGroup() cannot reach another group, so a timed-out search could still
+// leave that worker running. The gateway documents the opt-out itself
+// (hooks/self-update.mjs: `if (process.env.NNB_JIRA_NO_AUTOUPDATE || ...) return`).
+const envFixture = join(repoRoot, "tests", "fixtures", "fake-nnb-jira-env.sh");
+
+test("the search child is told not to run the gateway's autoupdate", () => {
+  const sb = sandbox();
+  const envDump = join(sb, "child-env.txt");
+  try {
+    const count = runIn(sb, `
+      process.stdout.write(JSON.stringify(
+        issues.refreshOpenIssues({ bin: ${JSON.stringify(envFixture)} }),
+      ));
+    `, { CC_USAGE_TEST_ENV_DUMP: envDump });
+    assert.equal(count, 1, "the fake gateway still answered normally");
+    const dumped = readFileSync(envDump, "utf8");
+    assert.match(dumped, /^NNB_JIRA_NO_AUTOUPDATE=1$/m,
+      "the child must inherit the gateway's documented autoupdate opt-out");
+    // The rest of the environment still has to reach the gateway, or it cannot
+    // find its own config or credentials.
+    assert.match(dumped, /^CC_USAGE_TEST_ENV_DUMP=/m, "the parent environment is passed through, not replaced");
+  } finally { rmSync(sb, { recursive: true, force: true }); }
+});
+
+// ---- P2: a cache from the future is not a fresh cache ----------------------
+test("isFresh rejects a cache dated in the future", () => {
+  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const at = (ms) => ({ fetchedAt: new Date(now - ms).toISOString(), issues: [] });
+  // A clock rollback (VM restore, NTP correction, dual boot) leaves fetchedAt
+  // ahead of now. A negative age is smaller than any TTL, so the old comparison
+  // called it fresh and the cache silently stopped refreshing.
+  assert.equal(isFresh(at(-3 * 86400_000), now), false, "three days in the future is not fresh");
+  assert.equal(isFresh(at(-1), now), false, "not even one millisecond ahead");
+  assert.equal(isFresh(at(0), now), true, "exactly now is still fresh");
+});
+
+test("a future-dated cache is refreshed rather than trusted", () => {
+  const sb = sandbox();
+  try {
+    seedCache(sb, ISSUES, { ageMs: -3 * 86400_000 });
+    const out = runIn(sb, SPAWN_PROBE, { CC_USAGE_NNB_JIRA_BIN: fakeJira });
+    assert.equal(out.calls.length, 1, "a cache from the future must not suppress the refresh");
+  } finally { rmSync(sb, { recursive: true, force: true }); }
+});

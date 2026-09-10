@@ -11,7 +11,10 @@
   DETACHED background process started at SessionStart. A session start never
   waits on Jira, and a failed refresh keeps the previous cache. The gateway runs
   in its own process group, so a timeout takes the whole tree with it rather than
-  orphaning the helpers `nnb-jira` starts.
+  orphaning the helpers `nnb-jira` starts, and it is told not to run the
+  gateway's own background self-update, which would fork into a process group we
+  could never reach. A cache dated in the future (clock rollback) counts as
+  stale rather than fresh forever.
 - The top 8 candidates are ranked locally — folder history, then the branch key,
   then word overlap between the request and the issue title, then recency — and
   injected as a numbered `KEY | summary | status` data block for both hosts. No model call, no prompt

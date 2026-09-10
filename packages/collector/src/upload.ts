@@ -104,6 +104,8 @@ export async function httpUpload(
   let sessions = 0;
   let daily = 0;
   let skippedUnauthorized = 0;
+  let skippedRows = 0;
+  const failures: string[] = [];
   for (const [user, payload] of byUser) {
     const res = await fetch(opts.url, {
       method: "POST",
@@ -126,22 +128,58 @@ export async function httpUpload(
       // covered account). Other errors (400 bad payload, 5xx) are real and rethrow.
       if (res.status === 401 || res.status === 403) {
         skippedUnauthorized++;
+        // Prefer the server's own reason. A shared account rejects a token that
+        // does not name its operator, and the generic "enroll this account"
+        // advice would send the user down the wrong path — re-enrolling without
+        // an operator mints another token that is rejected exactly the same way.
+        let reason = "";
+        try {
+          const parsed = JSON.parse(text) as { error?: unknown };
+          if (typeof parsed.error === "string" && parsed.error) reason = parsed.error;
+        } catch { /* not JSON → fall back to the generic hint */ }
         process.stderr.write(
-          `Skipped ${user}: token not authorized to upload as this account ` +
-            `(${res.status}). Enroll this account or have the maintainer extend your token.\n`,
+          reason
+            ? `Skipped ${user} (${res.status}): ${reason}\n`
+            : `Skipped ${user}: token not authorized to upload as this account ` +
+              `(${res.status}). Enroll this account or have the maintainer extend your token.\n`,
         );
         continue;
       }
-      throw new Error(`ingest failed for ${user} (${res.status}): ${text.slice(0, 200)}`);
+      // A server-side failure for ONE account must not cost the others their
+      // upload. Throwing here aborted the whole run at the first bad bucket, so
+      // every account after it in the payload went unsent — and there is no
+      // retry queue, so anything outside the next run's --days window needed a
+      // manual re-upload. Record it, keep going, and fail the RUN at the end so
+      // it is never mistaken for success.
+      failures.push(`${user} (${res.status}): ${text.slice(0, 200)}`);
+      process.stderr.write(`Failed ${user} (${res.status}) — continuing with the other accounts.\n`);
+      continue;
     }
-    const json = (await res.json()) as { sessions?: number; daily?: number };
+    const json = (await res.json()) as { sessions?: number; daily?: number; skipped?: number };
     sessions += json.sessions ?? 0;
     daily += json.daily ?? 0;
+    // The server refuses a session row that belongs to a DIFFERENT operator on a
+    // shared account. Dropping that count would report a clean upload for work
+    // that was not recorded.
+    skippedRows += json.skipped ?? 0;
+  }
+  if (skippedRows > 0) {
+    process.stderr.write(
+      `${skippedRows} session row(s) rejected by the server: they already belong to ` +
+        "another person on a shared account. If that is wrong, the session was " +
+        "uploaded under the wrong operator — check `cc-usage doctor`.\n",
+    );
   }
   if (skippedUnauthorized > 0) {
     process.stderr.write(
       `${skippedUnauthorized} account(s) skipped (token not authorized). ` +
         `Uploaded ${sessions} session(s) for the covered account(s).\n`,
+    );
+  }
+  if (failures.length > 0) {
+    // Non-zero exit, after everything that COULD be uploaded was.
+    throw new Error(
+      `ingest failed for ${failures.length} account(s), the rest were uploaded:\n  ${failures.join("\n  ")}`,
     );
   }
   return { sessions, daily };

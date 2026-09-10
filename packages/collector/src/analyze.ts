@@ -142,12 +142,10 @@ function buildSession(
   opts: AnalyzeOptions,
   segmentAccount?: SessionAccount,
   /**
-   * Per-model fraction of the SESSION that belongs to this segment, when the
-   * session was split across accounts. Absent for an unsplit session.
+   * This segment's whole-number share of the session's authoritative per-model
+   * counts. Absent for an unsplit session. Already conserves across segments.
    */
-  ccShare?: Map<string, number>,
-  /** True for the final segment, which absorbs the rounding remainder. */
-  ccIsLastSegment = false,
+  ccShare?: Map<string, TokenTotals>,
 ): SessionSummary {
   // Copy before sorting — never mutate the caller's array (analyze() also groups
   // these same records by day, so an in-place sort would be a hidden side effect).
@@ -226,29 +224,14 @@ function buildSession(
   let sessionTotals: TokenTotals;
   let notionalCostUsd: number;
   if (cc && ccShare) {
-    // Scale each model's authoritative row by this segment's share of it.
-    //
-    // Rounding is done with an explicit floor + remainder rule rather than
-    // Math.round per field: rounding each field independently does not conserve
-    // the total (two halves of 1 token become 1 + 1), and these numbers are
-    // reported as costs. The LAST segment carries the remainder, so the segments
-    // sum to ccusage's figure exactly.
-    const scale = (total: number, f: number): number =>
-      ccIsLastSegment ? total - Math.floor(total * (1 - f)) : Math.floor(total * f);
-    modelUsage = cc.models.map((m) => {
-      const f = ccShare.get(m.model) ?? 0;
-      return {
-        ...m,
-        inputTokens: scale(m.inputTokens, f),
-        outputTokens: scale(m.outputTokens, f),
-        cacheCreationTokens: scale(m.cacheCreationTokens, f),
-        cacheReadTokens: scale(m.cacheReadTokens, f),
-        totalTokens: scale(m.totalTokens, f),
-        costUsd: m.costUsd * f,
-      };
-    // A model with real tokens whose apportioned cost rounds to zero must stay;
-    // only a model this segment did not use at all is dropped.
-    }).filter((m) => (ccShare.get(m.model) ?? 0) > 0);
+    // Whole numbers straight from apportionModels; cost follows the token share
+    // of that model so it cannot drift from the authoritative per-model price.
+    modelUsage = cc.models.flatMap((m) => {
+      const t = ccShare.get(m.model);
+      if (!t) return [];
+      const f = m.totalTokens > 0 ? t.totalTokens / m.totalTokens : 0;
+      return [{ ...m, ...t, costUsd: m.costUsd * f }];
+    });
     sessionTotals = emptyTotals();
     for (const m of modelUsage) {
       sessionTotals.inputTokens += m.inputTokens;
@@ -365,37 +348,100 @@ function buildDaily(sessions: SessionSummary[]): DailySummary[] {
  * same fallback work email — and a user-keyed map then silently drops one
  * segment's records, leaving it with zero active hours.
  */
+/**
+ * Fold `extra` into `target`. Used only when two segments of one session resolve
+ * to the SAME user, which the server cannot represent as two rows: it keys
+ * sessions by (user_id, session_id), so the second upload would overwrite the
+ * first and leave the session holding one segment while daily holds both.
+ */
+function mergeInto(target: SessionSummary, extra: SessionSummary): void {
+  for (const f of [
+    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "totalTokens",
+  ] as const) {
+    target.totals[f] += extra.totals[f];
+  }
+  target.messageCount += extra.messageCount;
+  target.notionalCostUsd += extra.notionalCostUsd;
+  const byModel = new Map(target.modelUsage.map((m) => [m.model, m]));
+  for (const m of extra.modelUsage) {
+    const cur = byModel.get(m.model);
+    if (!cur) { target.modelUsage.push(m); byModel.set(m.model, m); continue; }
+    cur.inputTokens += m.inputTokens;
+    cur.outputTokens += m.outputTokens;
+    cur.cacheCreationTokens += m.cacheCreationTokens;
+    cur.cacheReadTokens += m.cacheReadTokens;
+    cur.totalTokens += m.totalTokens;
+    cur.costUsd += m.costUsd;
+  }
+  target.models = target.modelUsage.map((m) => m.model);
+}
+
 function segmentKey(provider: UsageProvider, sessionId: string, index: number): string {
   return `${provider}:${sessionId}#${index}`;
 }
 
 /**
- * Per-model fraction of a split session that each segment accounts for, using
- * our own deduped token counts as the ratio. A model absent from a segment gets
- * 0; a model present only in one segment gets 1 there.
+ * Split each model's authoritative token counts across the segments.
+ *
+ * Returns whole numbers, not ratios, and they SUM to the authoritative figure
+ * for every field. Scaling by a ratio and rounding each segment independently
+ * does not conserve: three thirds of 2 floor to 0+0+1, and two halves of 1 round
+ * to 1+1. Largest remainder assigns the floor to everyone, then hands the
+ * leftover units to the segments with the largest fractional parts.
  */
-function modelShares(
+function apportionModels(
   segments: { recs: UsageRecord[] }[],
-): Map<string, number>[] {
-  const totalByModel = new Map<string, number>();
-  const perSeg = segments.map((seg) => {
+  models: ModelUsage[],
+): Map<string, TokenTotals>[] {
+  const fields = [
+    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "totalTokens",
+  ] as const;
+  const out: Map<string, TokenTotals>[] = segments.map(() => new Map());
+
+  // Our own per-segment, per-model counts — used only as WEIGHTS.
+  const weights = segments.map((seg) => {
     const m = new Map<string, number>();
     for (const r of seg.recs) {
       if (!r.model) continue;
       const n = r.inputTokens + r.outputTokens + r.cacheCreationTokens + r.cacheReadTokens;
       m.set(r.model, (m.get(r.model) ?? 0) + n);
-      totalByModel.set(r.model, (totalByModel.get(r.model) ?? 0) + n);
     }
     return m;
   });
-  return perSeg.map((m) => {
-    const share = new Map<string, number>();
-    for (const [model, n] of m) {
-      const total = totalByModel.get(model) ?? 0;
-      share.set(model, total > 0 ? n / total : 0);
+
+  for (const model of models) {
+    const w = weights.map((m) => m.get(model.model) ?? 0);
+    const wSum = w.reduce((a, b) => a + b, 0);
+    // A model no segment used locally: give it entirely to the first segment
+    // rather than dropping it, so its authoritative tokens never vanish.
+    const share = wSum > 0 ? w.map((x) => x / wSum) : w.map((_, i) => (i === 0 ? 1 : 0));
+
+    const totals = segments.map(() => ({
+      inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0,
+      cacheReadTokens: 0, totalTokens: 0,
+    }));
+    for (const field of fields) {
+      const total = model[field];
+      const exact = share.map((f) => total * f);
+      const floors = exact.map((x) => Math.floor(x));
+      let left = total - floors.reduce((a, b) => a + b, 0);
+      // Hand out the remaining units to the largest fractional parts first.
+      const order = exact
+        .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+        .sort((a, b) => b.frac - a.frac);
+      const give = floors.slice();
+      for (const { i } of order) {
+        if (left <= 0) break;
+        give[i] = give[i]! + 1;
+        left -= 1;
+      }
+      give.forEach((v, i) => { totals[i]![field] = v; });
     }
-    return share;
-  });
+    totals.forEach((t, i) => {
+      if (fields.some((f) => t[f] > 0)) out[i]!.set(model.model, t);
+    });
+  }
+  return out;
 }
 
 /**
@@ -416,14 +462,18 @@ function splitByAccount(
   if (!timeline || timeline.length <= 1) {
     return [{ account: timeline?.[0], recs }];
   }
-  const out = new Map<string, { account?: SessionAccount; recs: UsageRecord[] }>();
+  // Bucketed by the timeline ENTRY, not by the account string. A session that
+  // goes A -> B -> A has three entries, and the third may carry stronger
+  // identity evidence than the first; merging them by address reuses the first
+  // entry and throws that evidence away.
+  const buckets = timeline.map((account) => ({ account, recs: [] as UsageRecord[] }));
+  const indexOf = new Map(timeline.map((entry, i) => [entry, i]));
   for (const r of recs) {
-    const acct = accountAt(timeline, r.timestamp);
-    const key = acct?.account ?? "";
-    const bucket = out.get(key) ?? out.set(key, { account: acct, recs: [] }).get(key)!;
-    bucket.recs.push(r);
+    const entry = accountAt(timeline, r.timestamp);
+    const i = entry ? indexOf.get(entry) ?? 0 : 0;
+    buckets[i]!.recs.push(r);
   }
-  return [...out.values()].filter((b) => b.recs.length > 0);
+  return buckets.filter((b) => b.recs.length > 0);
 }
 
 export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisResult {
@@ -454,16 +504,33 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     // Per-model share of the session, used to apportion ccusage's authoritative
     // numbers. Computed from OUR counts, which is only a ratio — the price per
     // token still comes from ccusage.
-    const shares = segments.length > 1 ? modelShares(segments) : undefined;
+    const cost = provider === "claude" ? opts.ccusageCost?.get(sessionId) : undefined;
+    const shares = segments.length > 1 && cost
+      ? apportionModels(segments, cost.models)
+      : undefined;
+    // Build first, then MERGE any segments that resolved to the same user.
+    // The server keys sessions by (user_id, session_id), so two such segments
+    // are one row there: sending both makes the second overwrite the first — the
+    // session ends up with one segment's tokens while daily has both.
+    const byUser = new Map<string, { summary: SessionSummary; recs: UsageRecord[] }>();
     segments.forEach((seg, i) => {
-      const summary = buildSession(
-        sessionId, seg.recs, opts, seg.account, shares?.[i], i === segments.length - 1,
-      );
-      const key = segmentKey(provider, sessionId, i);
+      const summary = buildSession(sessionId, seg.recs, opts, seg.account, shares?.[i]);
+      const prev = byUser.get(summary.user);
+      if (prev) {
+        mergeInto(prev.summary, summary);
+        prev.recs.push(...seg.recs);
+      } else {
+        byUser.set(summary.user, { summary, recs: [...seg.recs] });
+      }
+    });
+    let ordinal = 0;
+    for (const { summary, recs: segRecs } of byUser.values()) {
+      const key = segmentKey(provider, sessionId, ordinal);
+      ordinal += 1;
       built.push(summary);
       builtKeys.set(summary, key);
-      segRecords.set(key, seg.recs);
-    });
+      segRecords.set(key, segRecs);
+    }
   }
 
   // Active time (KI-759), derived so per-session and daily rollups AGREE.

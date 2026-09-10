@@ -476,8 +476,11 @@ test("two segments that resolve to the SAME identity keep their own hours", () =
     ]]),
   });
 
-  assert.equal(split.sessions.length, 2, "both segments are still produced");
-  assert.equal(new Set(split.sessions.map((s) => s.user)).size, 1, "both resolve to one identity");
+  // Both segments resolve to one identity, and the server keys sessions by
+  // (user_id, session_id) — so two rows there are ONE row, and the second upload
+  // would overwrite the first. They must be merged locally instead.
+  assert.equal(split.sessions.length, 1, "segments sharing an identity are merged, not sent twice");
+  assert.equal(new Set(split.sessions.map((s) => s.user)).size, 1);
 
   // Compare against the UNSPLIT run, not against this run's own daily total.
   // On a collision the daily rollup is computed from the same clobbered grouping,
@@ -535,4 +538,80 @@ test("apportioning a split conserves the authoritative token count exactly", () 
   assert.equal(sum((s) => s.totals.outputTokens), 1, "output must sum to the authoritative 1");
   assert.equal(sum((s) => s.totals.totalTokens), 4);
   assert.equal(Math.round(sum((s) => s.notionalCostUsd) * 100) / 100, 3);
+});
+
+test("apportioning conserves across THREE segments, not just two", () => {
+  // Two-segment conservation was satisfied by "last segment takes the
+  // remainder". With three, flooring each share independently loses units:
+  // three thirds of 2 floor to 0 + 0 + 1.
+  const mk = (iso: string): UsageRecord => ({
+    ...rec("s-three", iso), model: "claude-sonnet-4", inputTokens: 1, outputTokens: 1,
+  });
+  const at = (h: number, m: number) =>
+    `2026-07-13T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  const result = analyze(
+    [mk(at(10, 0)), mk(at(11, 10)), mk(at(12, 20))],
+    {
+      user: "a@nnb24.de",
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+      sessionAccounts: new Map([[
+        "claude:s-three",
+        [
+          { account: "a@nnb24.de", ts: new Date(at(9, 0)).toISOString() },
+          { account: "b@nnb24.de", ts: new Date(at(11, 0)).toISOString() },
+          { account: "c@nnb24.de", ts: new Date(at(12, 0)).toISOString() },
+        ],
+      ]]),
+      ccusageCost: new Map([["s-three", {
+        totalCostUsd: 9,
+        totals: { inputTokens: 2, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 4 },
+        models: [{
+          model: "claude-sonnet-4", provider: "claude" as const,
+          inputTokens: 2, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0,
+          totalTokens: 4, costUsd: 9, costAvailable: true,
+        }],
+      }]]),
+    },
+  );
+  assert.equal(result.sessions.length, 3, "three distinct accounts, three rows");
+  const sum = (f: (s: (typeof result.sessions)[number]) => number) =>
+    result.sessions.reduce((a, s) => a + f(s), 0);
+  assert.equal(sum((s) => s.totals.inputTokens), 2, "input must sum to the authoritative 2");
+  assert.equal(sum((s) => s.totals.outputTokens), 2, "output must sum to the authoritative 2");
+  assert.equal(sum((s) => s.totals.totalTokens), 4);
+  assert.equal(Math.round(sum((s) => s.notionalCostUsd) * 100) / 100, 9);
+});
+
+test("a non-contiguous switch keeps each visit's own identity evidence", () => {
+  // A -> B -> A. Bucketing by the account STRING merged the two A visits into
+  // the first one, so a later verified capture was replaced by the earlier
+  // unverified entry and that usage failed closed.
+  const mk = (iso: string): UsageRecord => ({
+    ...rec("s-abab", iso), provider: "codex", model: "gpt-5.6-sol",
+  });
+  const at = (h: number) => `2026-07-13T${String(h).padStart(2, "0")}:05:00`;
+  const result = analyze([mk(at(10)), mk(at(11)), mk(at(12))], {
+    user: "fallback@nnb24.de",
+    providerUsers: { claude: "c@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([[
+      "codex:s-abab",
+      [
+        { account: "a@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+        { account: "b@nnb24.de", providerVerified: true, ts: new Date("2026-07-13T10:30:00").toISOString() },
+        { account: "a@nnb24.de", providerVerified: true, ts: new Date("2026-07-13T11:30:00").toISOString() },
+      ],
+    ]]),
+  });
+  const users = result.sessions.map((s) => s.user).sort();
+  // The third visit is VERIFIED, so it must be attributed to a@ — not folded
+  // back into the first, unverified visit and lost to the fallback identity.
+  assert.ok(users.includes("a@nnb24.de"), `verified return visit lost: ${users.join(", ")}`);
+  assert.ok(users.includes("b@nnb24.de"));
 });

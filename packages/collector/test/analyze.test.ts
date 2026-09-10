@@ -106,8 +106,8 @@ test("missing Codex identity fails closed instead of borrowing the Claude accoun
     jira: { scanCommits: false },
     // Bare legacy rows and pre-fix provider-scoped rows both belong to Claude.
     sessionAccounts: new Map([
-      ["codex-id", { account: "claude@nnb24.de" }],
-      ["codex:codex-id", { account: "claude@nnb24.de" }],
+      ["codex-id", [{ account: "claude@nnb24.de" }]],
+      ["codex:codex-id", [{ account: "claude@nnb24.de" }]],
     ]),
   });
   assert.equal(result.sessions[0]?.user, "unknown-codex-account");
@@ -128,7 +128,7 @@ test("verified historical Codex identity remains valid after the account signs o
     jira: { scanCommits: false },
     sessionAccounts: new Map([[
       "codex:codex-id",
-      { account: "codex@nnb24.de", providerVerified: true },
+      [{ account: "codex@nnb24.de", providerVerified: true }],
     ]]),
   });
   assert.equal(result.sessions[0]?.user, "codex@nnb24.de");
@@ -208,8 +208,8 @@ test("daily rollup is per (user, day) — a mixed-account day never lumps under 
     idleGapMs: 30 * 60_000,
     jira: { scanCommits: false }, // no git side effects in tests
     sessionAccounts: new Map([
-      ["s-work", { account: "work@nnb24.de" }],
-      ["s-personal", { account: "me@personal.dev" }],
+      ["s-work", [{ account: "work@nnb24.de" }]],
+      ["s-personal", [{ account: "me@personal.dev" }]],
     ]),
   });
 
@@ -232,5 +232,100 @@ test("daily rollup is per (user, day) — a mixed-account day never lumps under 
     // The day-timeline merge apportions the machine day (1.0h coarse) evenly:
     // both sessions have identical raw active (32 min) → 0.5h each.
     assert.equal(d.activeTimeHours, 0.5);
+  }
+});
+
+// A session that switches accounts mid-flight must be SPLIT, not re-labelled.
+//
+// Re-labelling the whole session is worse than the bug it replaced: the first
+// account has already uploaded the session's running total, so moving the grown
+// total to the second account leaves BOTH rows in the database and every period
+// rollup counts the work twice.
+test("a mid-session account switch splits the session instead of moving all of it", () => {
+  const before = rec("s-switch", "2026-07-13T10:00:00");
+  const after = { ...rec("s-switch", "2026-07-13T12:00:00"), inputTokens: 100, outputTokens: 50 };
+  const result = analyze([before, after], {
+    user: "old@nnb24.de",
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([[
+      "claude:s-switch",
+      [
+        { account: "old@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+        { account: "new@nnb24.de", ts: new Date("2026-07-13T11:00:00").toISOString() },
+      ],
+    ]]),
+  });
+
+  const users = result.sessions.map((s) => s.user).sort();
+  assert.deepEqual(users, ["new@nnb24.de", "old@nnb24.de"], "one summary per account");
+  assert.equal(result.sessions.length, 2);
+
+  // Each segment carries only ITS OWN records — the whole point. Summing the
+  // segments must equal the session's real usage, never more.
+  const old = result.sessions.find((s) => s.user === "old@nnb24.de")!;
+  const fresh = result.sessions.find((s) => s.user === "new@nnb24.de")!;
+  assert.equal(old.totals.inputTokens, 10);
+  assert.equal(fresh.totals.inputTokens, 100);
+  assert.equal(
+    old.totals.totalTokens + fresh.totals.totalTokens,
+    (10 + 5) + (100 + 50),
+    "segments must sum to the session's real usage, not double it",
+  );
+
+  // Daily rows follow the same split, so the period rollup cannot double-count.
+  assert.equal(result.daily.length, 2);
+  assert.deepEqual(result.daily.map((d) => d.user).sort(), ["new@nnb24.de", "old@nnb24.de"]);
+});
+
+test("a session that never switched stays a single summary", () => {
+  const result = analyze([rec("s-stable", "2026-07-13T10:00:00")], {
+    user: "only@nnb24.de",
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([[
+      "claude:s-stable",
+      [{ account: "only@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() }],
+    ]]),
+  });
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0]?.user, "only@nnb24.de");
+});
+
+test("re-recording the same account does not split the session", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccu-tl-"));
+  try {
+    const file = path.join(dir, "tasks.jsonl");
+    // The hook writes on change only, but a race or a restored backup can leave
+    // duplicates. Two identical accounts are ONE segment, not two.
+    writeFileSync(file, [
+      JSON.stringify({ schemaVersion: 1, provider: "claude", sessionId: "s-dup", account: "a@nnb24.de", ts: "2026-07-13T09:00:00.000Z" }),
+      JSON.stringify({ schemaVersion: 1, provider: "claude", sessionId: "s-dup", account: "a@nnb24.de", ts: "2026-07-13T10:00:00.000Z" }),
+    ].join("\n"));
+    const timeline = loadSessionAccounts(file).get("claude:s-dup");
+    assert.equal(timeline?.length, 1, "identical consecutive accounts collapse");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the account timeline is ordered by ts, not by file order", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccu-tl2-"));
+  try {
+    const file = path.join(dir, "tasks.jsonl");
+    // Written out of order (clock adjustment / concurrent appends). The consumer
+    // must still see the real sequence, or a switch is applied backwards.
+    writeFileSync(file, [
+      JSON.stringify({ schemaVersion: 1, provider: "claude", sessionId: "s-ooo", account: "second@nnb24.de", ts: "2026-07-13T11:00:00.000Z" }),
+      JSON.stringify({ schemaVersion: 1, provider: "claude", sessionId: "s-ooo", account: "first@nnb24.de", ts: "2026-07-13T09:00:00.000Z" }),
+    ].join("\n"));
+    const timeline = loadSessionAccounts(file).get("claude:s-ooo");
+    assert.deepEqual(timeline?.map((a) => a.account), ["first@nnb24.de", "second@nnb24.de"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

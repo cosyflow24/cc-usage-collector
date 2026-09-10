@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CcusageSessionCost } from "./ccusage.ts";
 import { type JiraConfig, defaultJiraConfig, resolveJiraKey } from "./jira.ts";
 import { costForModelUsage } from "./pricing.ts";
-import { sessionTaskKey, type SessionAccount, type SessionTask } from "./sidecar.ts";
+import { accountAt, sessionTaskKey, type SessionAccount, type SessionTask } from "./sidecar.ts";
 import type {
   AnalysisResult,
   DailySummary,
@@ -29,7 +29,7 @@ export interface AnalyzeOptions {
   /** sessionId → Claude account in use then (SessionStart hook). Per-session
    * attribution: overrides the global `user` so each session is credited to the
    * account actually signed in then, not whatever is active at collector time. */
-  sessionAccounts?: Map<string, SessionAccount>;
+  sessionAccounts?: Map<string, SessionAccount[]>;
   /** sessionId → authoritative ccusage cost. When present, overrides pricing.ts. */
   ccusageCost?: Map<string, CcusageSessionCost> | null;
 }
@@ -139,6 +139,9 @@ function buildSession(
   sessionId: string,
   recs: UsageRecord[],
   opts: AnalyzeOptions,
+  segmentAccount?: SessionAccount,
+  /** True when this session was split, so ccusage's whole-session total no longer applies. */
+  isSegment = false,
 ): SessionSummary {
   // Copy before sorting — never mutate the caller's array (analyze() also groups
   // these same records by day, so an in-place sort would be a hidden side effect).
@@ -146,14 +149,18 @@ function buildSession(
   const start = recs[0]!.timestamp;
   const provider = recs[0]!.provider;
   const composite = sessionTaskKey(provider, sessionId);
-  const scopedAccount = opts.sessionAccounts?.get(composite);
+  // The account for THIS segment, chosen by the caller from the session's
+  // account timeline (see splitByAccount). Falls back to the timeline's own
+  // resolution when a caller passes records without a segment account.
+  const scopedAccount = segmentAccount
+    ?? accountAt(opts.sessionAccounts?.get(composite), recs[0]!.timestamp);
   const trustedScopedAccount = provider === "codex" && scopedAccount?.providerVerified !== true
     ? undefined
     : scopedAccount;
   // Pre-provider sidecars contain bare ids and were written by Claude hooks.
   // Never let one of those entries attribute a Codex rollout to a Claude user.
   const legacyClaudeAccount = provider === "claude"
-    ? opts.sessionAccounts?.get(sessionId)
+    ? accountAt(opts.sessionAccounts?.get(sessionId), recs[0]!.timestamp)
     : undefined;
   const hasProviderIdentity = opts.providerUsers
     ? Object.prototype.hasOwnProperty.call(opts.providerUsers, provider)
@@ -202,7 +209,12 @@ function buildSession(
   // Numbers: prefer ccusage's authoritative (deduped) tokens + cost; our parser
   // only contributes attribution. Fall back to our own deduped counts +
   // pricing.ts only when ccusage has no row for this session.
-  const cc = provider === "claude" ? opts.ccusageCost?.get(sessionId) : undefined;
+  // ccusage reports one total per SESSION. For a session split across accounts
+  // that total cannot be attributed to either segment, and apportioning it would
+  // invent precision, so a split session falls back to our own deduped counts —
+  // the same path used whenever ccusage has no row. Unsplit sessions (the
+  // overwhelming majority) keep the authoritative number.
+  const cc = provider === "claude" && !isSegment ? opts.ccusageCost?.get(sessionId) : undefined;
   let modelUsage: ModelUsage[];
   let sessionTotals: TokenTotals;
   let notionalCostUsd: number;
@@ -305,6 +317,34 @@ function buildDaily(sessions: SessionSummary[]): DailySummary[] {
     .sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
 
+/**
+ * Group a session's records by the account signed in when each was produced.
+ *
+ * Without this, a session that switched accounts mid-flight is attributed
+ * WHOLLY to one of them. That is not merely mislabelled: the earlier account
+ * already uploaded the session's running total, so re-attributing the grown
+ * total to the second account leaves BOTH rows in the database and the period
+ * rollup counts the work twice.
+ *
+ * Returns one entry when nothing switched, which is the normal case.
+ */
+function splitByAccount(
+  recs: UsageRecord[],
+  timeline: SessionAccount[] | undefined,
+): { account?: SessionAccount; recs: UsageRecord[] }[] {
+  if (!timeline || timeline.length <= 1) {
+    return [{ account: timeline?.[0], recs }];
+  }
+  const out = new Map<string, { account?: SessionAccount; recs: UsageRecord[] }>();
+  for (const r of recs) {
+    const acct = accountAt(timeline, r.timestamp);
+    const key = acct?.account ?? "";
+    const bucket = out.get(key) ?? out.set(key, { account: acct, recs: [] }).get(key)!;
+    bucket.recs.push(r);
+  }
+  return [...out.values()].filter((b) => b.recs.length > 0);
+}
+
 export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisResult {
   const filtered = opts.project
     ? records.filter((r) => r.cwd && path.basename(r.cwd) === opts.project)
@@ -314,7 +354,19 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     const key = sessionTaskKey(r.provider, r.sessionId);
     (bySession.get(key) ?? bySession.set(key, []).get(key)!).push(r);
   }
-  const built = [...bySession.values()].map((recs) => buildSession(recs[0]!.sessionId, recs, opts));
+  // Split each session at its account switches. A session that never switched
+  // yields exactly one segment, so this is a no-op for almost every session.
+  const built: SessionSummary[] = [];
+  for (const recs of bySession.values()) {
+    const sessionId = recs[0]!.sessionId;
+    const provider = recs[0]!.provider;
+    const timeline = opts.sessionAccounts?.get(sessionTaskKey(provider, sessionId));
+    const segments = splitByAccount(recs, timeline);
+    const split = segments.length > 1;
+    for (const seg of segments) {
+      built.push(buildSession(sessionId, seg.recs, opts, seg.account, split));
+    }
+  }
 
   // Active time (KI-759), derived so per-session and daily rollups AGREE.
   // Bucket every record by calendar DAY (and, within the day, by session):

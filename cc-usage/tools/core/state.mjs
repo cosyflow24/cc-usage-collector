@@ -188,15 +188,26 @@ export function latestAccountFor(sid, provider = "claude") {
     fd = openSync(file, "r");
     readSync(fd, buf, 0, len, start);
     const lines = buf.toString("utf8").split("\n").filter(Boolean);
+    // Pick by the HIGHEST ts, not by file order. The consumer
+    // (packages/collector/src/sidecar.ts loadSessionAccounts) resolves by max ts,
+    // and picking differently here would let a row that is last in the file but
+    // older in time convince us the account is unchanged — permanently
+    // suppressing a real switch. Out-of-order rows are not hypothetical: a clock
+    // adjustment or two concurrent captures appending to the same file produce
+    // exactly that.
     // A partial first line (we cut mid-record) just fails JSON.parse and is skipped.
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
+    let bestTs = "";
+    let best = "";
+    for (const line of lines) {
       let r;
-      try { r = JSON.parse(lines[i]); } catch { continue; }
+      try { r = JSON.parse(line); } catch { continue; }
       if (!r || r.sessionId !== sid || !r.account) continue;
       const rowProvider = r.provider === "codex" ? "codex" : "claude";
       if (rowProvider !== provider) continue;
-      return String(r.account);
+      const ts = typeof r.ts === "string" ? r.ts : "";
+      if (best === "" || ts >= bestTs) { bestTs = ts; best = String(r.account); }
     }
+    if (best) return best;
   } catch { /* no file / unreadable → treat as "unknown" */ } finally {
     if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
   }

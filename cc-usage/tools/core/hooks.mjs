@@ -15,6 +15,7 @@ import {
 } from "./state.mjs";
 import { reconcile } from "./launcher.mjs";
 import { selfUpdate } from "./autoupdate.mjs";
+import { rankCandidates, readOpenIssues, scheduleRefresh } from "./issues.mjs";
 
 const toolDir = dirname(dirname(fileURLToPath(import.meta.url))); // tools/
 const ccUsageMjs = join(toolDir, "cc-usage.mjs");
@@ -58,12 +59,25 @@ function hookSessionId(payload, provider) {
   return payload.session_id || payload.sessionId || "";
 }
 
+// A candidate rendered for the host: the key plus its REAL Jira title, so the
+// model can recognise the task semantically instead of pattern-matching keys it
+// has no meaning for. A key we only know from history or a branch has no title.
+function renderCandidate(candidate) {
+  if (typeof candidate === "string") return candidate;
+  const { key, summary, status } = candidate || {};
+  if (!summary) return key;
+  return status ? `${key} — ${summary} (${status})` : `${key} — ${summary}`;
+}
+
 // The host already has the conversation: semantic attribution needs no new
 // model call, Jira credentials, prompt storage, or prompt upload.
 function attributionContext(provider, declared, candidates, event) {
   const launcher = `node ${JSON.stringify(resolverPath)} task`;
+  const rendered = (candidates || []).map(renderCandidate).filter(Boolean);
   const additionalContext = `[cc-usage] Resolve task attribution from the CURRENT user request and conversation. `
-    + `Current label: ${declared?.jira || "not attributed"}. Candidate keys (not decisions): [${candidates.join(", ")}]. `
+    + `Current label: ${declared?.jira || "not attributed"}. `
+    + `Candidates — your open issues from Jira with their real titles, plus keys seen in this folder; still not decisions: `
+    + `[${rendered.join(", ")}]. `
     + "A previous label, recent folder history, or a branch is not evidence that a NEW request belongs to it. "
     + "Extract the task the user actually asks you to work on, including a key in a sentence or Jira URL. "
     + "For multiple keys, distinguish the target from comparisons, dependencies, quoted examples, and negated tasks; never take the first match blindly. "
@@ -98,7 +112,34 @@ export function sessionStart(payload) {
       || (provider === "claude" && hasMarker(sid))) return null;
   // Folder history is a suggestion, never a silent binding of a new session.
   return attributionContext(provider, declaredRow(sid, provider),
-    recentForCwd(cwd).map((r) => r.key), "SessionStart");
+    taskCandidates(cwd), "SessionStart");
+}
+
+// Ranked attribution candidates for this cwd. Everything is local: the cached
+// open issues (refreshed out of band), this folder's own history, and the
+// branch. `prompt` is matched against issue TITLES in this process and is never
+// stored or uploaded.
+// The opt-out is total: no cache is read, so the host sees exactly the keys it
+// saw before this feature existed.
+function cachedIssues() {
+  if (process.env.CC_USAGE_NO_ISSUE_CACHE) return [];
+  return readOpenIssues()?.issues || [];
+}
+
+function taskCandidates(cwd, prompt = "") {
+  try {
+    return rankCandidates({
+      cwd,
+      prompt,
+      branchKey: branchKey(cwd),
+      recent: recentForCwd(cwd).map((r) => r.key),
+      issues: cachedIssues(),
+    });
+  } catch {
+    // Candidates are a convenience; attribution must never break because the
+    // cache is unreadable.
+    return recentForCwd(cwd).map((r) => ({ key: r.key, summary: "", status: "", reason: "cwd history" }));
+  }
 }
 
 function autoCapture(sid, cwd, provider = "claude") {
@@ -148,11 +189,22 @@ export function promptSubmit(payload) {
     });
     return null;
   }
-  const candidates = [...new Set(Array.from(
+  const typed = [...new Set(Array.from(
     prompt.matchAll(/(?<![A-Za-z0-9_])[A-Z][A-Z0-9]+-[0-9]+(?![A-Za-z0-9_])/gi),
     (m) => m[0].toUpperCase(),
   ))].slice(0, 20);
-  return attributionContext(provider, declared, candidates, "UserPromptSubmit");
+  // Keys the user actually typed lead — they are the strongest signal there is.
+  // Ranked open issues follow, so a task never bound in this folder can still be
+  // recognised from its title.
+  const titles = new Map(cachedIssues().map((i) => [i.key, i]));
+  const explicit = typed.map((key) => ({
+    key,
+    summary: titles.get(key)?.summary || "",
+    status: titles.get(key)?.status || "",
+    reason: "named in this prompt",
+  }));
+  const ranked = taskCandidates(cwd, prompt).filter((c) => !typed.includes(c.key));
+  return attributionContext(provider, declared, [...explicit, ...ranked].slice(0, 20), "UserPromptSubmit");
 }
 
 // ---- maintenance: replaces bootstrap.sh (keeps the 09:30 LaunchAgent alive) --
@@ -169,6 +221,9 @@ function maintenance() {
     pruneOldSymlinks(bin);
     rmSync(join(STATE_DIR, "plugin-dist.env"), { force: true });
     selfUpdate();
+    // Detached, throttled, and inside the same try: refilling the open-issue
+    // cache must never delay or fail a session start.
+    scheduleRefresh();
   } catch { /* never block a hook */ }
 }
 

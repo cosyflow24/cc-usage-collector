@@ -253,6 +253,14 @@ async function doctor() {
     const live = await verifyToken(cfg.ingestUrl, token);
     if (live.verdict === "ok") {
       ok(`live check: token accepted (uploads as: ${live.enrolledEmails.join(", ") || "?"})`);
+      // WHO the usage lands under. On a shared Claude account the account email
+      // is not a person, so this line is the only place a user can see whether
+      // their work is being recorded under them or is about to be rejected.
+      if (live.operator) {
+        ok(`attributed to: ${live.operator}`);
+      } else {
+        out("     attributed to: (none) — fine for a personal account; a SHARED account will reject uploads until the token names you. Re-run cc-usage login and give your own work email.");
+      }
       const me = readOauthEmail();
       if (me && live.enrolledEmails.length && !live.enrolledEmails.includes(me)) {
         out(`     note: current Claude account ${me} is not among the token's accounts — an admin may need to link it.`);

@@ -116,6 +116,14 @@ export function promptSubmit(payload) {
   const provider = currentProvider(payload);
   const sid = hookSessionId(payload, provider);
   const cwd = payload.cwd || process.cwd();
+  // Re-capture the signed-in account on EVERY prompt, before any early return.
+  // SessionStart alone is not enough: `/login` mid-session silently leaves the
+  // whole session attributed to the PREVIOUS account. captureAccount only writes
+  // when the account actually changed, so the common case costs one bounded tail
+  // read and no row. Deliberately ahead of the project filter and the
+  // prompt/marker guards below — an account switch is worth recording even in a
+  // session whose attribution we otherwise ignore.
+  try { captureAccount(sid, cwd, provider); } catch { /* never block a hook */ }
   const raw = payload.prompt || payload.user_prompt || "";
   const prompt = typeof raw === "string" ? raw.trim() : "";
   const proj = process.env.CC_USAGE_PROJECT || readConfig().project;

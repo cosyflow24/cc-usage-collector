@@ -126,9 +126,20 @@ export async function httpUpload(
       // covered account). Other errors (400 bad payload, 5xx) are real and rethrow.
       if (res.status === 401 || res.status === 403) {
         skippedUnauthorized++;
+        // Prefer the server's own reason. A shared account rejects a token that
+        // does not name its operator, and the generic "enroll this account"
+        // advice would send the user down the wrong path — re-enrolling without
+        // an operator mints another token that is rejected exactly the same way.
+        let reason = "";
+        try {
+          const parsed = JSON.parse(text) as { error?: unknown };
+          if (typeof parsed.error === "string" && parsed.error) reason = parsed.error;
+        } catch { /* not JSON → fall back to the generic hint */ }
         process.stderr.write(
-          `Skipped ${user}: token not authorized to upload as this account ` +
-            `(${res.status}). Enroll this account or have the maintainer extend your token.\n`,
+          reason
+            ? `Skipped ${user} (${res.status}): ${reason}\n`
+            : `Skipped ${user}: token not authorized to upload as this account ` +
+              `(${res.status}). Enroll this account or have the maintainer extend your token.\n`,
         );
         continue;
       }

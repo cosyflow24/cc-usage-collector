@@ -3,7 +3,8 @@
 // existing 5.9 MB tasks.jsonl history. Ported verbatim from the old bash `node -e`
 // bodies (set-task.sh, session-prompt.sh, ask-task.sh, capture-task.sh).
 import {
-  appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync,
+  appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
+  readSync, statSync, writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -166,19 +167,62 @@ export function recentForCwd(cwd, limit = 3) {
   return out;
 }
 
+// Newest recorded account for a session, or "" when none is on file.
+//
+// Reads only the TAIL of tasks.jsonl (the file is multi-MB and this runs on every
+// UserPromptSubmit). A session's own rows are always recent, so a bounded tail is
+// enough; if the row has aged out of the window we simply re-record it, which is
+// harmless — worst case one extra row, never a wrong attribution.
+const ACCOUNT_SCAN_BYTES = 512 * 1024;
+
+export function latestAccountFor(sid, provider = "claude") {
+  if (!sid) return "";
+  let fd;
+  try {
+    const file = tasksFile();
+    const size = statSync(file).size;
+    const start = Math.max(0, size - ACCOUNT_SCAN_BYTES);
+    const len = size - start;
+    if (len <= 0) return "";
+    const buf = Buffer.allocUnsafe(len);
+    fd = openSync(file, "r");
+    readSync(fd, buf, 0, len, start);
+    const lines = buf.toString("utf8").split("\n").filter(Boolean);
+    // A partial first line (we cut mid-record) just fails JSON.parse and is skipped.
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      let r;
+      try { r = JSON.parse(lines[i]); } catch { continue; }
+      if (!r || r.sessionId !== sid || !r.account) continue;
+      const rowProvider = r.provider === "codex" ? "codex" : "claude";
+      if (rowProvider !== provider) continue;
+      return String(r.account);
+    }
+  } catch { /* no file / unreadable → treat as "unknown" */ } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
+  }
+  return "";
+}
+
 // Per-session account capture from the matching provider's authenticated
 // identity. Never attribute a Codex session to the unrelated Claude login.
+//
+// Idempotent by design: this runs on EVERY UserPromptSubmit (not just
+// SessionStart) so that signing into a different account MID-SESSION is
+// recorded — otherwise the whole session keeps being attributed to whoever was
+// signed in when it started, which is exactly wrong after a /login. Writing a
+// row only when the account actually CHANGED keeps tasks.jsonl from growing by
+// one row per prompt.
 export function captureAccount(sid, cwd, provider = "claude") {
   if (!sid) return;
   try {
     const account = readProviderEmail(provider);
-    if (account.includes("@")) {
-      appendRow({
-        schemaVersion: 1, provider, sessionId: sid, account, cwd,
-        identitySource: provider === "codex" ? "codex-id-token" : "claude-oauth",
-        ts: new Date().toISOString(), src: "hook-acct",
-      });
-    }
+    if (!account.includes("@")) return;
+    if (latestAccountFor(sid, provider) === account) return; // unchanged → no row
+    appendRow({
+      schemaVersion: 1, provider, sessionId: sid, account, cwd,
+      identitySource: provider === "codex" ? "codex-id-token" : "claude-oauth",
+      ts: new Date().toISOString(), src: "hook-acct",
+    });
   } catch { /* ignore */ }
 }
 

@@ -119,13 +119,22 @@ export function loadSessionAccounts(file = sidecarPath()): Map<string, SessionAc
   }
   // Oldest first, and collapse repeats: only a CHANGE starts a new segment, so a
   // re-recorded identical account must not split the session in two.
+  //
+  // A repeat keeps the FIRST entry's ts (that is when the segment began) but
+  // absorbs the strongest identity evidence any of them carries. Keeping only
+  // the first row would discard a later codex-id-token verification and send the
+  // segment down the fail-closed path as if the account had never been verified.
   for (const [key, list] of result) {
     list.sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
     const collapsed: SessionAccount[] = [];
     for (const a of list) {
-      if (collapsed.length === 0 || collapsed[collapsed.length - 1]!.account !== a.account) {
-        collapsed.push(a);
+      const prev = collapsed[collapsed.length - 1];
+      if (prev && prev.account === a.account) {
+        if (a.providerVerified) prev.providerVerified = true;
+        if (a.plan) prev.plan = a.plan;
+        continue;
       }
+      collapsed.push({ ...a });
     }
     result.set(key, collapsed);
   }

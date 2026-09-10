@@ -329,3 +329,114 @@ test("the account timeline is ordered by ts, not by file order", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Splitting a session must not multiply what the session actually consumed.
+// Both of these were real: active time was keyed by session id, so each segment
+// received the whole session's hours; and dropping ccusage's numbers pushed the
+// segments onto pricing.ts, which resolves some dated model ids to a cheaper
+// generation and understated cost roughly threefold.
+const switchTimeline = new Map([[
+  "claude:s-cost",
+  [
+    { account: "a@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+    { account: "b@nnb24.de", ts: new Date("2026-07-13T11:00:00").toISOString() },
+  ],
+]]);
+
+function costRun(sessionAccounts: Map<string, { account: string; ts?: string }[]> | undefined) {
+  // Two records per side of the switch, close enough together to produce active
+  // time (a gap wider than idleGapMs counts as away and yields zero hours).
+  const mk = (iso: string) => ({
+    ...rec("s-cost", iso),
+    model: "claude-opus-4-1-20250805",
+    inputTokens: 500_000,
+    outputTokens: 0,
+  });
+  const usage = {
+    model: "claude-opus-4-1-20250805",
+    provider: "claude" as const,
+    inputTokens: 2_000_000,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 2_000_000,
+    costUsd: 30,
+    costAvailable: true,
+  };
+  return analyze(
+    [
+      mk("2026-07-13T10:00:00"), mk("2026-07-13T10:10:00"),   // account A
+      mk("2026-07-13T11:10:00"), mk("2026-07-13T11:20:00"),   // account B
+    ],
+    {
+    user: "a@nnb24.de",
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts,
+    ccusageCost: new Map([["s-cost", {
+      totalCostUsd: 30,
+      totals: { inputTokens: 2_000_000, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2_000_000 },
+      models: [usage],
+    }]]),
+    },
+  );
+}
+
+test("splitting a session preserves ccusage's authoritative cost", () => {
+  const whole = costRun(undefined);
+  const split = costRun(switchTimeline);
+
+  assert.equal(whole.sessions.length, 1);
+  assert.equal(split.sessions.length, 2);
+
+  const wholeCost = whole.sessions.reduce((a, s) => a + s.notionalCostUsd, 0);
+  const splitCost = split.sessions.reduce((a, s) => a + s.notionalCostUsd, 0);
+  assert.equal(wholeCost, 30, "sanity: unsplit uses ccusage's number");
+  assert.equal(
+    splitCost, 30,
+    "a split must apportion the authoritative cost, never re-price with the fallback table",
+  );
+
+  const wholeTokens = whole.sessions.reduce((a, s) => a + s.totals.totalTokens, 0);
+  const splitTokens = split.sessions.reduce((a, s) => a + s.totals.totalTokens, 0);
+  assert.equal(splitTokens, wholeTokens, "tokens must not change by splitting");
+});
+
+test("splitting a session does not multiply its active time", () => {
+  const whole = costRun(undefined);
+  const split = costRun(switchTimeline);
+
+  const wholeHours = whole.sessions.reduce((a, s) => a + s.activeTimeHours, 0);
+  const splitHours = split.sessions.reduce((a, s) => a + s.activeTimeHours, 0);
+  assert.ok(wholeHours > 0, "sanity: the fixture has active time");
+  assert.equal(
+    splitHours, wholeHours,
+    "segments must divide the session's hours, not each receive all of them",
+  );
+
+  // And the daily rollup must agree with the sum of its segments.
+  const dailyHours = split.daily.reduce((a, d) => a + d.activeTimeHours, 0);
+  assert.equal(dailyHours, splitHours);
+});
+
+test("collapsing repeats keeps the strongest identity evidence, not the first row", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccu-verify-"));
+  try {
+    const file = path.join(dir, "tasks.jsonl");
+    // Codex recorded an unverified row first, then a verified one. Keeping only
+    // the earlier row would send this segment down the fail-closed path and
+    // attribute real usage to "unknown-codex-account".
+    writeFileSync(file, [
+      JSON.stringify({ schemaVersion: 1, provider: "codex", sessionId: "s-v", account: "c@nnb24.de", ts: "2026-07-13T09:00:00.000Z" }),
+      JSON.stringify({ schemaVersion: 1, provider: "codex", sessionId: "s-v", account: "c@nnb24.de", identitySource: "codex-id-token", ts: "2026-07-13T09:30:00.000Z" }),
+    ].join("\n"));
+    const timeline = loadSessionAccounts(file).get("codex:s-v");
+    assert.equal(timeline?.length, 1, "same account collapses to one segment");
+    assert.equal(timeline?.[0]?.providerVerified, true, "verification must survive the collapse");
+    assert.equal(timeline?.[0]?.ts, "2026-07-13T09:00:00.000Z", "segment still starts at the first row");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -104,6 +104,7 @@ export async function httpUpload(
   let sessions = 0;
   let daily = 0;
   let skippedUnauthorized = 0;
+  let skippedRows = 0;
   for (const [user, payload] of byUser) {
     const res = await fetch(opts.url, {
       method: "POST",
@@ -145,9 +146,20 @@ export async function httpUpload(
       }
       throw new Error(`ingest failed for ${user} (${res.status}): ${text.slice(0, 200)}`);
     }
-    const json = (await res.json()) as { sessions?: number; daily?: number };
+    const json = (await res.json()) as { sessions?: number; daily?: number; skipped?: number };
     sessions += json.sessions ?? 0;
     daily += json.daily ?? 0;
+    // The server refuses a session row that belongs to a DIFFERENT operator on a
+    // shared account. Dropping that count would report a clean upload for work
+    // that was not recorded.
+    skippedRows += json.skipped ?? 0;
+  }
+  if (skippedRows > 0) {
+    process.stderr.write(
+      `${skippedRows} session row(s) rejected by the server: they already belong to ` +
+        "another person on a shared account. If that is wrong, the session was " +
+        "uploaded under the wrong operator — check `cc-usage doctor`.\n",
+    );
   }
   if (skippedUnauthorized > 0) {
     process.stderr.write(

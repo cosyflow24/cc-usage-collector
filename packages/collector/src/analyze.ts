@@ -9,6 +9,7 @@ import type {
   ModelUsage,
   SessionSummary,
   TokenTotals,
+  UsageProvider,
   UsageRecord,
 } from "./types.ts";
 
@@ -140,8 +141,11 @@ function buildSession(
   recs: UsageRecord[],
   opts: AnalyzeOptions,
   segmentAccount?: SessionAccount,
-  /** True when this session was split, so ccusage's whole-session total no longer applies. */
-  isSegment = false,
+  /**
+   * Per-model fraction of the SESSION that belongs to this segment, when the
+   * session was split across accounts. Absent for an unsplit session.
+   */
+  ccShare?: Map<string, number>,
 ): SessionSummary {
   // Copy before sorting — never mutate the caller's array (analyze() also groups
   // these same records by day, so an in-place sort would be a hidden side effect).
@@ -209,16 +213,40 @@ function buildSession(
   // Numbers: prefer ccusage's authoritative (deduped) tokens + cost; our parser
   // only contributes attribution. Fall back to our own deduped counts +
   // pricing.ts only when ccusage has no row for this session.
-  // ccusage reports one total per SESSION. For a session split across accounts
-  // that total cannot be attributed to either segment, and apportioning it would
-  // invent precision, so a split session falls back to our own deduped counts —
-  // the same path used whenever ccusage has no row. Unsplit sessions (the
-  // overwhelming majority) keep the authoritative number.
-  const cc = provider === "claude" && !isSegment ? opts.ccusageCost?.get(sessionId) : undefined;
+  // ccusage reports one total per SESSION. A split session cannot use it whole,
+  // but it must not fall back to pricing.ts either: that table resolves some
+  // dated model ids (claude-opus-4-1-20250805) to a cheaper generation and would
+  // report a third of the real cost. Instead the authoritative per-model numbers
+  // are apportioned by this segment's share of that model's tokens — an
+  // approximation of the SPLIT, not of the price.
+  const cc = provider === "claude" ? opts.ccusageCost?.get(sessionId) : undefined;
   let modelUsage: ModelUsage[];
   let sessionTotals: TokenTotals;
   let notionalCostUsd: number;
-  if (cc) {
+  if (cc && ccShare) {
+    // Scale each model's authoritative row by this segment's share of it.
+    modelUsage = cc.models.map((m) => {
+      const f = ccShare.get(m.model) ?? 0;
+      return {
+        ...m,
+        inputTokens: Math.round(m.inputTokens * f),
+        outputTokens: Math.round(m.outputTokens * f),
+        cacheCreationTokens: Math.round(m.cacheCreationTokens * f),
+        cacheReadTokens: Math.round(m.cacheReadTokens * f),
+        totalTokens: Math.round(m.totalTokens * f),
+        costUsd: m.costUsd * f,
+      };
+    }).filter((m) => m.totalTokens > 0 || m.costUsd > 0);
+    sessionTotals = emptyTotals();
+    for (const m of modelUsage) {
+      sessionTotals.inputTokens += m.inputTokens;
+      sessionTotals.outputTokens += m.outputTokens;
+      sessionTotals.cacheCreationTokens += m.cacheCreationTokens;
+      sessionTotals.cacheReadTokens += m.cacheReadTokens;
+      sessionTotals.totalTokens += m.totalTokens;
+    }
+    notionalCostUsd = modelUsage.reduce((a, m) => a + m.costUsd, 0);
+  } else if (cc) {
     modelUsage = cc.models;
     sessionTotals = cc.totals;
     notionalCostUsd = cc.totalCostUsd;
@@ -317,6 +345,40 @@ function buildDaily(sessions: SessionSummary[]): DailySummary[] {
     .sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
 
+/** Identity of one account-segment of a session, for per-segment bookkeeping. */
+function segmentKey(provider: UsageProvider, sessionId: string, user: string): string {
+  return `${provider}:${sessionId}\u0000${user}`;
+}
+
+/**
+ * Per-model fraction of a split session that each segment accounts for, using
+ * our own deduped token counts as the ratio. A model absent from a segment gets
+ * 0; a model present only in one segment gets 1 there.
+ */
+function modelShares(
+  segments: { recs: UsageRecord[] }[],
+): Map<string, number>[] {
+  const totalByModel = new Map<string, number>();
+  const perSeg = segments.map((seg) => {
+    const m = new Map<string, number>();
+    for (const r of seg.recs) {
+      if (!r.model) continue;
+      const n = r.inputTokens + r.outputTokens + r.cacheCreationTokens + r.cacheReadTokens;
+      m.set(r.model, (m.get(r.model) ?? 0) + n);
+      totalByModel.set(r.model, (totalByModel.get(r.model) ?? 0) + n);
+    }
+    return m;
+  });
+  return perSeg.map((m) => {
+    const share = new Map<string, number>();
+    for (const [model, n] of m) {
+      const total = totalByModel.get(model) ?? 0;
+      share.set(model, total > 0 ? n / total : 0);
+    }
+    return share;
+  });
+}
+
 /**
  * Group a session's records by the account signed in when each was produced.
  *
@@ -356,16 +418,26 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   }
   // Split each session at its account switches. A session that never switched
   // yields exactly one segment, so this is a no-op for almost every session.
+  //
+  // The segment's records are kept alongside its summary: active time is
+  // apportioned per SEGMENT further down, and keying that by session id alone
+  // gave every segment the whole session's hours (0.5h became 2 x 0.5h).
   const built: SessionSummary[] = [];
+  const segRecords = new Map<string, UsageRecord[]>();
   for (const recs of bySession.values()) {
     const sessionId = recs[0]!.sessionId;
     const provider = recs[0]!.provider;
     const timeline = opts.sessionAccounts?.get(sessionTaskKey(provider, sessionId));
     const segments = splitByAccount(recs, timeline);
-    const split = segments.length > 1;
-    for (const seg of segments) {
-      built.push(buildSession(sessionId, seg.recs, opts, seg.account, split));
-    }
+    // Per-model share of the session, used to apportion ccusage's authoritative
+    // numbers. Computed from OUR counts, which is only a ratio — the price per
+    // token still comes from ccusage.
+    const shares = segments.length > 1 ? modelShares(segments) : undefined;
+    segments.forEach((seg, i) => {
+      const summary = buildSession(sessionId, seg.recs, opts, seg.account, shares?.[i]);
+      built.push(summary);
+      segRecords.set(segmentKey(summary.provider, summary.sessionId, summary.user), seg.recs);
+    });
   }
 
   // Active time (KI-759), derived so per-session and daily rollups AGREE.
@@ -377,13 +449,19 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   //      per-day shares — so no single session can exceed a day, and the daily
   //      rollup (per user+day, from these shares) == Σ its sessions == what
   //      epics sum.
+  // Which segment each record belongs to, so a day's active time is apportioned
+  // across SEGMENTS. Keying by session alone handed every segment of a split
+  // session the session's full hours.
+  const recordSegment = new Map<UsageRecord, string>();
+  for (const [key, recs] of segRecords) for (const r of recs) recordSegment.set(r, key);
+
   const recsByDay = new Map<string, UsageRecord[]>();
   const daySessions = new Map<string, Map<string, UsageRecord[]>>();
   for (const r of filtered) {
     const d = localDay(r.timestamp);
     (recsByDay.get(d) ?? recsByDay.set(d, []).get(d)!).push(r);
     const sm = daySessions.get(d) ?? daySessions.set(d, new Map()).get(d)!;
-    const key = sessionTaskKey(r.provider, r.sessionId);
+    const key = recordSegment.get(r) ?? sessionTaskKey(r.provider, r.sessionId);
     (sm.get(key) ?? sm.set(key, []).get(key)!).push(r);
   }
   const sessionActiveHours = new Map<string, number>();
@@ -413,7 +491,7 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   const sessions = built
     .map((s) => ({
       ...s,
-      activeTimeHours: sessionActiveHours.get(sessionTaskKey(s.provider, s.sessionId)) ?? 0,
+      activeTimeHours: sessionActiveHours.get(segmentKey(s.provider, s.sessionId, s.user)) ?? 0,
     }))
     .sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
 

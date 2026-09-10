@@ -4163,7 +4163,7 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-V5AL24RB.js");
+    const { httpUpload } = await import("./upload-VSU4VEG7.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken

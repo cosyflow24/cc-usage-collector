@@ -105,6 +105,7 @@ export async function httpUpload(
   let daily = 0;
   let skippedUnauthorized = 0;
   let skippedRows = 0;
+  const failures: string[] = [];
   for (const [user, payload] of byUser) {
     const res = await fetch(opts.url, {
       method: "POST",
@@ -144,7 +145,15 @@ export async function httpUpload(
         );
         continue;
       }
-      throw new Error(`ingest failed for ${user} (${res.status}): ${text.slice(0, 200)}`);
+      // A server-side failure for ONE account must not cost the others their
+      // upload. Throwing here aborted the whole run at the first bad bucket, so
+      // every account after it in the payload went unsent — and there is no
+      // retry queue, so anything outside the next run's --days window needed a
+      // manual re-upload. Record it, keep going, and fail the RUN at the end so
+      // it is never mistaken for success.
+      failures.push(`${user} (${res.status}): ${text.slice(0, 200)}`);
+      process.stderr.write(`Failed ${user} (${res.status}) — continuing with the other accounts.\n`);
+      continue;
     }
     const json = (await res.json()) as { sessions?: number; daily?: number; skipped?: number };
     sessions += json.sessions ?? 0;
@@ -165,6 +174,12 @@ export async function httpUpload(
     process.stderr.write(
       `${skippedUnauthorized} account(s) skipped (token not authorized). ` +
         `Uploaded ${sessions} session(s) for the covered account(s).\n`,
+    );
+  }
+  if (failures.length > 0) {
+    // Non-zero exit, after everything that COULD be uploaded was.
+    throw new Error(
+      `ingest failed for ${failures.length} account(s), the rest were uploaded:\n  ${failures.join("\n  ")}`,
     );
   }
   return { sessions, daily };

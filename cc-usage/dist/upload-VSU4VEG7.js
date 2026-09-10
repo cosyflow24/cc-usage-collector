@@ -81,6 +81,7 @@ async function httpUpload(result, opts) {
   let daily = 0;
   let skippedUnauthorized = 0;
   let skippedRows = 0;
+  const failures = [];
   for (const [user, payload] of byUser) {
     const res = await fetch(opts.url, {
       method: "POST",
@@ -111,7 +112,10 @@ async function httpUpload(result, opts) {
         );
         continue;
       }
-      throw new Error(`ingest failed for ${user} (${res.status}): ${text.slice(0, 200)}`);
+      failures.push(`${user} (${res.status}): ${text.slice(0, 200)}`);
+      process.stderr.write(`Failed ${user} (${res.status}) \u2014 continuing with the other accounts.
+`);
+      continue;
     }
     const json = await res.json();
     sessions += json.sessions ?? 0;
@@ -128,6 +132,12 @@ async function httpUpload(result, opts) {
     process.stderr.write(
       `${skippedUnauthorized} account(s) skipped (token not authorized). Uploaded ${sessions} session(s) for the covered account(s).
 `
+    );
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `ingest failed for ${failures.length} account(s), the rest were uploaded:
+  ${failures.join("\n  ")}`
     );
   }
   return { sessions, daily };

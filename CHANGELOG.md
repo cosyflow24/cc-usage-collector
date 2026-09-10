@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0
+
+- Attribution can now suggest a task that was NEVER bound in this folder. The
+  hooks used to hand the host model only the last keys seen in this cwd plus
+  whatever the user literally typed, so a real, open ticket was unreachable no
+  matter how obviously the request matched its title.
+- A local cache of your open Jira issues (key, summary, status, updated; at most
+  50, 6 h TTL) is filled through the existing read-only `nnb-jira` gateway by a
+  DETACHED background process started at SessionStart. A session start never
+  waits on Jira, and a failed refresh keeps the previous cache.
+- The top 8 candidates are ranked locally — folder history, then the branch key,
+  then word overlap between the request and the issue title, then recency — and
+  injected as `KEY — summary (status)` for both hosts. No model call, no prompt
+  storage, no upload: prompts never leave the machine.
+- Candidates remain suggestions. The host still never invents a key and still
+  asks once when the target is unclear.
+- Opt out with `CC_USAGE_NO_ISSUE_CACHE=1`, which restores the previous
+  behaviour exactly.
+
 ## 0.7.2
 
 - CLI 版本直接读取发布包元数据，避免 doctor 与 marketplace 版本漂移。

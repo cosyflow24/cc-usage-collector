@@ -177,6 +177,20 @@ Claude sessions are imported; Codex sessions can also be resumed natively.
 The first prompt in a monitored project pauses once to ask which Jira task it's
 for — just answer with `/cc-usage:task`.
 
+### Task candidates
+
+So that a ticket you never worked on in this folder can still be suggested,
+cc-usage keeps a local list of **your open Jira issues** — key, summary, status,
+and last-updated date, at most 50 of them. It is read through the existing
+read-only `nnb-jira` gateway, refreshed at most every 6 hours by a background
+process that a session start never waits for, and stored in
+`~/.claude/cc-usage/open-issues.json` (mode 0600). The assistant is offered the
+eight best-matching titles as suggestions; it still never invents a key, and it
+still asks you when the right task is unclear. Ranking happens on this machine
+by plain string matching — **your prompts never leave the machine**, are never
+stored in the cache, and are never uploaded. Set `CC_USAGE_NO_ISSUE_CACHE=1` to
+switch the whole thing off.
+
 `cc-usage` never authenticates to Jira and cannot create, edit, comment on, or
 transition issues. Use the separate company Jira plugin for Jira work.
 

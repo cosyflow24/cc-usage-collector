@@ -3124,7 +3124,6 @@ function loadSessionAccounts(file = sidecarPath()) {
   } catch {
     return /* @__PURE__ */ new Map();
   }
-  const latestTs = /* @__PURE__ */ new Map();
   const result = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
@@ -3140,16 +3139,38 @@ function loadSessionAccounts(file = sidecarPath()) {
     const provider = row.provider === "codex" ? "codex" : "claude";
     const composite = sessionTaskKey(provider, row.sessionId);
     const ts = typeof row.ts === "string" ? row.ts : "";
-    const prev = latestTs.get(composite);
-    if (prev === void 0 || ts >= prev) {
-      latestTs.set(composite, ts);
-      const acct = { account: row.account };
-      if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
-      acct.providerVerified = provider === "claude" || row.identitySource === "codex-id-token";
-      result.set(composite, acct);
+    const acct = { account: row.account, ts };
+    if (typeof row.plan === "string" && row.plan) acct.plan = row.plan;
+    acct.providerVerified = provider === "claude" || row.identitySource === "codex-id-token";
+    const list = result.get(composite);
+    if (list) list.push(acct);
+    else result.set(composite, [acct]);
+  }
+  for (const [key, list] of result) {
+    list.sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? ""));
+    const collapsed = [];
+    for (const a of list) {
+      const prev = collapsed[collapsed.length - 1];
+      if (prev && prev.account === a.account) {
+        if (a.providerVerified) prev.providerVerified = true;
+        if (a.plan) prev.plan = a.plan;
+        continue;
+      }
+      collapsed.push({ ...a });
     }
+    result.set(key, collapsed);
   }
   return result;
+}
+function accountAt(timeline, when) {
+  if (!Array.isArray(timeline) || timeline.length === 0) return void 0;
+  const iso = when.toISOString();
+  let current = timeline[0];
+  for (const entry of timeline) {
+    if (!entry.ts || entry.ts <= iso) current = entry;
+    else break;
+  }
+  return current;
 }
 
 // src/analyze.ts
@@ -3222,14 +3243,14 @@ function toActiveHours(ms) {
 function roundQuarterHours(hours) {
   return Math.round(hours / 0.25) * 0.25;
 }
-function buildSession(sessionId, recs, opts) {
+function buildSession(sessionId, recs, opts, segmentAccount, ccShare) {
   recs = [...recs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   const start = recs[0].timestamp;
   const provider = recs[0].provider;
   const composite = sessionTaskKey(provider, sessionId);
-  const scopedAccount = opts.sessionAccounts?.get(composite);
+  const scopedAccount = segmentAccount ?? accountAt(opts.sessionAccounts?.get(composite), recs[0].timestamp);
   const trustedScopedAccount = provider === "codex" && scopedAccount?.providerVerified !== true ? void 0 : scopedAccount;
-  const legacyClaudeAccount = provider === "claude" ? opts.sessionAccounts?.get(sessionId) : void 0;
+  const legacyClaudeAccount = provider === "claude" ? accountAt(opts.sessionAccounts?.get(sessionId), recs[0].timestamp) : void 0;
   const hasProviderIdentity = opts.providerUsers ? Object.prototype.hasOwnProperty.call(opts.providerUsers, provider) : false;
   const providerUser = hasProviderIdentity ? opts.providerUsers?.[provider] : opts.user;
   const end = recs[recs.length - 1].timestamp;
@@ -3262,7 +3283,23 @@ function buildSession(sessionId, recs, opts) {
   let modelUsage;
   let sessionTotals;
   let notionalCostUsd;
-  if (cc) {
+  if (cc && ccShare) {
+    modelUsage = cc.models.flatMap((m) => {
+      const t = ccShare.get(m.model);
+      if (!t) return [];
+      const f = m.totalTokens > 0 ? t.totalTokens / m.totalTokens : 0;
+      return [{ ...m, ...t, costUsd: m.costUsd * f }];
+    });
+    sessionTotals = emptyTotals();
+    for (const m of modelUsage) {
+      sessionTotals.inputTokens += m.inputTokens;
+      sessionTotals.outputTokens += m.outputTokens;
+      sessionTotals.cacheCreationTokens += m.cacheCreationTokens;
+      sessionTotals.cacheReadTokens += m.cacheReadTokens;
+      sessionTotals.totalTokens += m.totalTokens;
+    }
+    notionalCostUsd = modelUsage.reduce((a, m) => a + m.costUsd, 0);
+  } else if (cc) {
     modelUsage = cc.models;
     sessionTotals = cc.totals;
     notionalCostUsd = cc.totalCostUsd;
@@ -3344,6 +3381,107 @@ function buildDaily(sessions) {
     };
   }).sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
+function mergeInto(target, extra) {
+  for (const f of [
+    "inputTokens",
+    "outputTokens",
+    "cacheCreationTokens",
+    "cacheReadTokens",
+    "totalTokens"
+  ]) {
+    target.totals[f] += extra.totals[f];
+  }
+  target.messageCount += extra.messageCount;
+  target.notionalCostUsd += extra.notionalCostUsd;
+  if (extra.project) target.project = extra.project;
+  if (extra.gitBranch) target.gitBranch = extra.gitBranch;
+  if (extra.jiraKey) target.jiraKey = extra.jiraKey;
+  if (extra.epicKey) target.epicKey = extra.epicKey;
+  if (extra.epicSummary) target.epicSummary = extra.epicSummary;
+  const byModel = new Map(target.modelUsage.map((m) => [m.model, m]));
+  for (const m of extra.modelUsage) {
+    const cur = byModel.get(m.model);
+    if (!cur) {
+      target.modelUsage.push(m);
+      byModel.set(m.model, m);
+      continue;
+    }
+    cur.inputTokens += m.inputTokens;
+    cur.outputTokens += m.outputTokens;
+    cur.cacheCreationTokens += m.cacheCreationTokens;
+    cur.cacheReadTokens += m.cacheReadTokens;
+    cur.totalTokens += m.totalTokens;
+    cur.costUsd += m.costUsd;
+  }
+  target.models = target.modelUsage.map((m) => m.model);
+}
+function segmentKey(provider, sessionId, index) {
+  return `${provider}:${sessionId}#${index}`;
+}
+function apportionModels(segments, models) {
+  const components = [
+    "inputTokens",
+    "outputTokens",
+    "cacheCreationTokens",
+    "cacheReadTokens"
+  ];
+  const out = segments.map(() => /* @__PURE__ */ new Map());
+  const weights = segments.map((seg) => {
+    const m = /* @__PURE__ */ new Map();
+    for (const r of seg.recs) {
+      if (!r.model) continue;
+      const n = r.inputTokens + r.outputTokens + r.cacheCreationTokens + r.cacheReadTokens;
+      m.set(r.model, (m.get(r.model) ?? 0) + n);
+    }
+    return m;
+  });
+  for (const model of models) {
+    const w = weights.map((m) => m.get(model.model) ?? 0);
+    const wSum = w.reduce((a, b) => a + b, 0);
+    const share = wSum > 0 ? w.map((x) => x / wSum) : w.map((_, i) => i === 0 ? 1 : 0);
+    const totals = segments.map(() => ({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0
+    }));
+    for (const field of components) {
+      const total = model[field];
+      const exact = share.map((f) => total * f);
+      const floors = exact.map((x) => Math.floor(x));
+      let left = total - floors.reduce((a, b) => a + b, 0);
+      const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+      const give = floors.slice();
+      for (const { i } of order) {
+        if (left <= 0) break;
+        give[i] = give[i] + 1;
+        left -= 1;
+      }
+      give.forEach((v, i) => {
+        totals[i][field] = v;
+      });
+    }
+    totals.forEach((t, i) => {
+      t.totalTokens = t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens;
+      if (t.totalTokens > 0) out[i].set(model.model, t);
+    });
+  }
+  return out;
+}
+function splitByAccount(recs, timeline) {
+  if (!timeline || timeline.length <= 1) {
+    return [{ account: timeline?.[0], recs }];
+  }
+  const buckets = timeline.map((account) => ({ account, recs: [] }));
+  const indexOf = new Map(timeline.map((entry, i) => [entry, i]));
+  for (const r of recs) {
+    const entry = accountAt(timeline, r.timestamp);
+    const i = entry ? indexOf.get(entry) ?? 0 : 0;
+    buckets[i].recs.push(r);
+  }
+  return buckets.filter((b) => b.recs.length > 0);
+}
 function analyze(records, opts) {
   const filtered = opts.project ? records.filter((r) => r.cwd && path2.basename(r.cwd) === opts.project) : records;
   const bySession = /* @__PURE__ */ new Map();
@@ -3351,14 +3489,45 @@ function analyze(records, opts) {
     const key = sessionTaskKey(r.provider, r.sessionId);
     (bySession.get(key) ?? bySession.set(key, []).get(key)).push(r);
   }
-  const built = [...bySession.values()].map((recs) => buildSession(recs[0].sessionId, recs, opts));
+  const built = [];
+  const segRecords = /* @__PURE__ */ new Map();
+  const builtKeys = /* @__PURE__ */ new Map();
+  for (const recs of bySession.values()) {
+    const sessionId = recs[0].sessionId;
+    const provider = recs[0].provider;
+    const timeline = opts.sessionAccounts?.get(sessionTaskKey(provider, sessionId));
+    const segments = splitByAccount(recs, timeline);
+    const cost = provider === "claude" ? opts.ccusageCost?.get(sessionId) : void 0;
+    const shares = segments.length > 1 && cost ? apportionModels(segments, cost.models) : void 0;
+    const byUser = /* @__PURE__ */ new Map();
+    segments.forEach((seg, i) => {
+      const summary = buildSession(sessionId, seg.recs, opts, seg.account, shares?.[i]);
+      const prev = byUser.get(summary.user);
+      if (prev) {
+        mergeInto(prev.summary, summary);
+        prev.recs.push(...seg.recs);
+      } else {
+        byUser.set(summary.user, { summary, recs: [...seg.recs] });
+      }
+    });
+    let ordinal = 0;
+    for (const { summary, recs: segRecs } of byUser.values()) {
+      const key = segmentKey(provider, sessionId, ordinal);
+      ordinal += 1;
+      built.push(summary);
+      builtKeys.set(summary, key);
+      segRecords.set(key, segRecs);
+    }
+  }
+  const recordSegment = /* @__PURE__ */ new Map();
+  for (const [key, recs] of segRecords) for (const r of recs) recordSegment.set(r, key);
   const recsByDay = /* @__PURE__ */ new Map();
   const daySessions = /* @__PURE__ */ new Map();
   for (const r of filtered) {
     const d = localDay(r.timestamp);
     (recsByDay.get(d) ?? recsByDay.set(d, []).get(d)).push(r);
     const sm = daySessions.get(d) ?? daySessions.set(d, /* @__PURE__ */ new Map()).get(d);
-    const key = sessionTaskKey(r.provider, r.sessionId);
+    const key = recordSegment.get(r) ?? sessionTaskKey(r.provider, r.sessionId);
     (sm.get(key) ?? sm.set(key, []).get(key)).push(r);
   }
   const sessionActiveHours = /* @__PURE__ */ new Map();
@@ -3381,7 +3550,7 @@ function analyze(records, opts) {
   }
   const sessions = built.map((s) => ({
     ...s,
-    activeTimeHours: sessionActiveHours.get(sessionTaskKey(s.provider, s.sessionId)) ?? 0
+    activeTimeHours: sessionActiveHours.get(builtKeys.get(s) ?? "") ?? 0
   })).sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
   const totals = emptyTotals();
   let notionalCostUsd = 0;
@@ -3994,7 +4163,7 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-VT3GWVYR.js");
+    const { httpUpload } = await import("./upload-VSU4VEG7.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken

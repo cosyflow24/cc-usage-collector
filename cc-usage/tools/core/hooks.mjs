@@ -72,7 +72,12 @@ function attributionContext(provider, declared, candidates, event) {
     + "passing only a validated key matching ^[A-Z][A-Z0-9]+-[0-9]+$; never interpolate raw user text. "
     + "Keep the existing label silently for a clear continuation. If a task switch is evident but the target key is unresolved, "
     + `${askToolPhrase(provider)} with one concise clarification; do not present the old label as the identified new task. `
-    + "If initially unassigned and the request cannot be mapped, ask once for a key or None; if ignored, continue work without repeating the question. "
+    + "If initially unassigned and NO candidate key is present, and the request names concrete work, you MAY search the issue tracker ONCE "
+    + "with whatever read-only Jira tooling this environment already provides, to look for an existing issue that matches. "
+    + "A search hit is a SUGGESTION, never a binding: show the key with its summary and let the user confirm before you record it. "
+    + "Never create an issue on your own — filing one is an outward action that needs explicit user approval, and it is not required: "
+    + "leaving a session untracked is a legitimate outcome, not a failure. "
+    + "If nothing matches, ask once, offering both a key and not tracking; if ignored, continue work without repeating the question. "
     + `For an explicit opt-out run \`${launcher} none\`. This records only local attribution metadata, never writes to Jira. `
     + "The collector labels the whole session with its latest key; for separate per-task accounting use a new session when switching tasks.";
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
@@ -116,6 +121,14 @@ export function promptSubmit(payload) {
   const provider = currentProvider(payload);
   const sid = hookSessionId(payload, provider);
   const cwd = payload.cwd || process.cwd();
+  // Re-capture the signed-in account on EVERY prompt, before any early return.
+  // SessionStart alone is not enough: `/login` mid-session silently leaves the
+  // whole session attributed to the PREVIOUS account. captureAccount only writes
+  // when the account actually changed, so the common case costs one bounded tail
+  // read and no row. Deliberately ahead of the project filter and the
+  // prompt/marker guards below — an account switch is worth recording even in a
+  // session whose attribution we otherwise ignore.
+  try { captureAccount(sid, cwd, provider); } catch { /* never block a hook */ }
   const raw = payload.prompt || payload.user_prompt || "";
   const prompt = typeof raw === "string" ? raw.trim() : "";
   const proj = process.env.CC_USAGE_PROJECT || readConfig().project;

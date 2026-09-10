@@ -18,9 +18,36 @@ test("whoamiUrl derives from the ingest URL", () => {
 
 test("200 → ok with enrolled emails", async () => {
   const r = await verifyToken("https://x/api/ingest", "ccu_t", {
+    fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" }),
+  });
+  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" });
+});
+
+test("a dashboard that predates the operator field reports unknown, not a wrong owner", async () => {
+  // An old deployment simply omits `operator`. Reporting null keeps `doctor`
+  // honest ("attributed to: none") instead of claiming an attribution that the
+  // server never made.
+  const r = await verifyToken("https://x/api/ingest", "ccu_t", {
     fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"] }),
   });
-  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"] });
+  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: null });
+});
+
+test("a non-string operator is treated as absent", async () => {
+  for (const bad of [42, {}, [], "", null]) {
+    const r = await verifyToken("https://x/api/ingest", "ccu_t", {
+      fetchImpl: mk(200, { ok: true, enrolledEmails: [], operator: bad }),
+    });
+    assert.equal(r.operator, null, `operator=${JSON.stringify(bad)} must degrade to null`);
+  }
+});
+
+test("every non-ok verdict still carries an explicit null operator", async () => {
+  const boom = async () => { throw new Error("ECONNREFUSED"); };
+  for (const impl of [mk(401, {}), mk(503, {}), boom]) {
+    assert.equal((await verifyToken("u", "t", { fetchImpl: impl })).operator, null);
+  }
+  assert.equal((await verifyToken("u", "", { fetchImpl: boom })).operator, null);
 });
 
 test("401/403 → rejected; 5xx and network errors → unreachable (never rejected)", async () => {

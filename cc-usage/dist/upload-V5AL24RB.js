@@ -80,6 +80,7 @@ async function httpUpload(result, opts) {
   let sessions = 0;
   let daily = 0;
   let skippedUnauthorized = 0;
+  let skippedRows = 0;
   for (const [user, payload] of byUser) {
     const res = await fetch(opts.url, {
       method: "POST",
@@ -97,8 +98,15 @@ async function httpUpload(result, opts) {
       const text = await res.text().catch(() => "");
       if (res.status === 401 || res.status === 403) {
         skippedUnauthorized++;
+        let reason = "";
+        try {
+          const parsed = JSON.parse(text);
+          if (typeof parsed.error === "string" && parsed.error) reason = parsed.error;
+        } catch {
+        }
         process.stderr.write(
-          `Skipped ${user}: token not authorized to upload as this account (${res.status}). Enroll this account or have the maintainer extend your token.
+          reason ? `Skipped ${user} (${res.status}): ${reason}
+` : `Skipped ${user}: token not authorized to upload as this account (${res.status}). Enroll this account or have the maintainer extend your token.
 `
         );
         continue;
@@ -108,6 +116,13 @@ async function httpUpload(result, opts) {
     const json = await res.json();
     sessions += json.sessions ?? 0;
     daily += json.daily ?? 0;
+    skippedRows += json.skipped ?? 0;
+  }
+  if (skippedRows > 0) {
+    process.stderr.write(
+      `${skippedRows} session row(s) rejected by the server: they already belong to another person on a shared account. If that is wrong, the session was uploaded under the wrong operator \u2014 check \`cc-usage doctor\`.
+`
+    );
   }
   if (skippedUnauthorized > 0) {
     process.stderr.write(

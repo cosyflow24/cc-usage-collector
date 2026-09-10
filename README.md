@@ -186,8 +186,10 @@ read-only `nnb-jira` gateway, refreshed at most every 6 hours by a background
 process that a session start never waits for, and stored in
 `~/.claude/cc-usage/open-issues.json` (mode 0600). The assistant is offered the
 eight best-matching titles as suggestions, in a block explicitly marked as data
-so that a title can never act as an instruction; it still never invents a key,
-and it still asks you when the right task is unclear. Ranking happens on this machine
+so that a title can never act as an instruction; titles are reduced to plain
+readable characters first, so nothing written in a Jira summary can change the
+shape of that block. It still never invents a key, and it still asks you when the
+right task is unclear. Ranking happens on this machine
 by plain string matching — **your prompts never leave the machine**, are never
 stored in the cache, and are never uploaded. Set `CC_USAGE_NO_ISSUE_CACHE=1` to
 switch the whole thing off.

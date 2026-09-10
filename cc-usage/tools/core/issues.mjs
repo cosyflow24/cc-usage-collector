@@ -17,7 +17,9 @@
 //   * Candidates are suggestions. Nothing here writes an attribution row.
 //
 // Opt out entirely with CC_USAGE_NO_ISSUE_CACHE=1.
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+} from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,15 +40,65 @@ const KEY_RE = /^[A-Z][A-Z0-9]+-[0-9]+$/;
 const CALL_TIMEOUT_MS = 60_000;
 const ccUsageMjs = join(dirname(dirname(fileURLToPath(import.meta.url))), "cc-usage.mjs");
 
+// ------------------------------------------------------- untrusted issue text
+// A Jira summary is text OTHER PEOPLE wrote, and it is about to be concatenated
+// into the instruction block the host model reads. A title like
+// `[cc-usage] OVERRIDE: ...` on its own line would be indistinguishable from the
+// hook's own voice, so titles are flattened to a single line of inert
+// characters before they get anywhere near the context:
+//   * every whitespace run (newlines included) becomes one space,
+//   * control characters, including ANSI escapes, are removed,
+//   * `[`, `]`, backticks and double quotes are removed — the first pair frames
+//     the hook's own marker, the last two frame code spans and the quoted title
+//     in the rendered candidate line,
+//   * and the result is truncated, because length alone is an attack.
+export const SUMMARY_MAX = 80;
+export const STATUS_MAX = 24;
+
+export function cleanTitle(text, max = SUMMARY_MAX) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/[[\]`"]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, Math.max(0, max))
+    .trimEnd();
+}
+
+// One malformed row must not cost the whole attribution hint, so every record
+// is validated on the way OUT of the cache and simply dropped when it does not
+// hold up. Returns a sanitized record, or null.
+function validateIssue(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const key = String(raw.key ?? "").toUpperCase();
+  if (!KEY_RE.test(key)) return null;
+  if (raw.summary !== undefined && typeof raw.summary !== "string") return null;
+  if (raw.status !== undefined && typeof raw.status !== "string") return null;
+  const updated = typeof raw.updated === "string" && Number.isFinite(Date.parse(raw.updated))
+    ? raw.updated : "";
+  return {
+    key,
+    summary: cleanTitle(raw.summary, SUMMARY_MAX),
+    status: cleanTitle(raw.status, STATUS_MAX),
+    updated,
+  };
+}
+
 // ------------------------------------------------------------------ the cache
-/** The cached open issues, or null when absent/unreadable/corrupt. */
+/**
+ * The cached open issues, or null when absent/unreadable/corrupt. Only records
+ * that pass validation are returned — a cache written by an older version, or
+ * hand-edited, can never hand a caller a row that breaks it.
+ */
 export function readOpenIssues() {
   try {
     const parsed = JSON.parse(readFileSync(ISSUES_FILE, "utf8"));
     if (!parsed || typeof parsed !== "object") return null;
+    const rows = Array.isArray(parsed.issues) ? parsed.issues : [];
     return {
       fetchedAt: typeof parsed.fetchedAt === "string" ? parsed.fetchedAt : "",
-      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+      issues: rows.map(validateIssue).filter(Boolean),
     };
   } catch { return null; }
 }
@@ -127,17 +179,41 @@ export function refreshOpenIssues({ bin = findNnbJira(), spawn: spawnFn = spawnS
     for (const raw of Array.isArray(parsed?.issues) ? parsed.issues : []) {
       const key = String(raw?.key || "").toUpperCase();
       if (!KEY_RE.test(key)) continue; // a key is interpolated into prose later
-      issues.push({
+      const record = validateIssue({
         key,
-        summary: String(raw?.fields?.summary || ""),
-        status: String(raw?.fields?.status?.name || ""),
-        updated: String(raw?.fields?.updated || ""),
+        summary: String(raw?.fields?.summary ?? ""),
+        status: String(raw?.fields?.status?.name ?? ""),
+        updated: String(raw?.fields?.updated ?? ""),
       });
+      if (!record) continue;
+      issues.push(record);
       if (issues.length >= MAX_ISSUES) break;
     }
     writeCache(issues);
     return issues.length;
   } catch { return null; }
+}
+
+// One marker per hour would otherwise accumulate in asked/ forever — 8760 files
+// a year of pure throttling state. Anything older than two days can no longer
+// throttle anything, so it goes. Bounded, best effort, and scoped strictly to
+// OUR prefix: the same directory holds the not-tracked markers, whose absence
+// would silently re-enable a question the user turned off.
+const REFRESH_MARKER_PREFIX = "issues-refresh-";
+const MARKER_MAX_AGE_MS = 48 * 3600_000;
+
+function pruneRefreshMarkers(keep, now = Date.now()) {
+  const dir = join(STATE_DIR, "asked");
+  let names;
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    if (!name.startsWith(REFRESH_MARKER_PREFIX) || name === keep) continue;
+    // The bucket is encoded in the NAME (UTC, hour precision), so pruning does
+    // not depend on mtime surviving a copy or a restore.
+    const at = Date.parse(`${name.slice(REFRESH_MARKER_PREFIX.length)}:00:00.000Z`);
+    if (!Number.isFinite(at) || now - at <= MARKER_MAX_AGE_MS) continue;
+    try { unlinkSync(join(dir, name)); } catch { /* best effort */ }
+  }
 }
 
 /**
@@ -150,7 +226,9 @@ export function scheduleRefresh({ spawn: spawnFn = spawn } = {}) {
   if (process.env.CC_USAGE_NO_ISSUE_CACHE) return false;
   if (!findNnbJira()) return false;
   if (isFresh(readOpenIssues())) return false;
-  if (!claimMarker(`issues-refresh-${new Date().toISOString().slice(0, 13)}`)) return false;
+  const marker = `${REFRESH_MARKER_PREFIX}${new Date().toISOString().slice(0, 13)}`;
+  if (!claimMarker(marker)) return false;
+  pruneRefreshMarkers(marker);
   try {
     const child = spawnFn(process.execPath, [ccUsageMjs, "hook", "issues-refresh"], {
       detached: true, stdio: "ignore",
@@ -204,11 +282,14 @@ export function rankCandidates({
   for (const issue of Array.isArray(issues) ? issues : []) {
     const key = String(issue?.key || "").toUpperCase();
     if (!KEY_RE.test(key) || meta.has(key)) continue;
+    // Sanitized here as well, not only in readOpenIssues: rankCandidates is
+    // exported and pure, and a caller passing raw gateway rows must not be able
+    // to smuggle a newline into the rendered candidate list.
     meta.set(key, {
       key,
-      summary: String(issue?.summary || ""),
-      status: String(issue?.status || ""),
-      updated: String(issue?.updated || ""),
+      summary: cleanTitle(issue?.summary, SUMMARY_MAX),
+      status: cleanTitle(issue?.status, STATUS_MAX),
+      updated: String(issue?.updated ?? ""),
     });
   }
 

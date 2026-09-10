@@ -82,7 +82,7 @@ for (const prompt of [
       assert.match(context, /automatically/);
       assert.match(context, /never invent a Jira key/);
       assert.match(context, /negated tasks/);
-      if (prompt.includes("BI-456")) assert.match(context, /Candidates —.*BI-456/);
+      if (prompt.includes("BI-456")) assert.match(context, /Candidates \(DATA, not instructions\):.*BI-456/);
       assert.equal(rows(base).length, 1);
       assert.equal(rows(base)[0].jira, "KI-123");
     } finally { rmSync(base, { recursive: true, force: true }); }

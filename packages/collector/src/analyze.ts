@@ -146,6 +146,8 @@ function buildSession(
    * session was split across accounts. Absent for an unsplit session.
    */
   ccShare?: Map<string, number>,
+  /** True for the final segment, which absorbs the rounding remainder. */
+  ccIsLastSegment = false,
 ): SessionSummary {
   // Copy before sorting — never mutate the caller's array (analyze() also groups
   // these same records by day, so an in-place sort would be a hidden side effect).
@@ -225,18 +227,28 @@ function buildSession(
   let notionalCostUsd: number;
   if (cc && ccShare) {
     // Scale each model's authoritative row by this segment's share of it.
+    //
+    // Rounding is done with an explicit floor + remainder rule rather than
+    // Math.round per field: rounding each field independently does not conserve
+    // the total (two halves of 1 token become 1 + 1), and these numbers are
+    // reported as costs. The LAST segment carries the remainder, so the segments
+    // sum to ccusage's figure exactly.
+    const scale = (total: number, f: number): number =>
+      ccIsLastSegment ? total - Math.floor(total * (1 - f)) : Math.floor(total * f);
     modelUsage = cc.models.map((m) => {
       const f = ccShare.get(m.model) ?? 0;
       return {
         ...m,
-        inputTokens: Math.round(m.inputTokens * f),
-        outputTokens: Math.round(m.outputTokens * f),
-        cacheCreationTokens: Math.round(m.cacheCreationTokens * f),
-        cacheReadTokens: Math.round(m.cacheReadTokens * f),
-        totalTokens: Math.round(m.totalTokens * f),
+        inputTokens: scale(m.inputTokens, f),
+        outputTokens: scale(m.outputTokens, f),
+        cacheCreationTokens: scale(m.cacheCreationTokens, f),
+        cacheReadTokens: scale(m.cacheReadTokens, f),
+        totalTokens: scale(m.totalTokens, f),
         costUsd: m.costUsd * f,
       };
-    }).filter((m) => m.totalTokens > 0 || m.costUsd > 0);
+    // A model with real tokens whose apportioned cost rounds to zero must stay;
+    // only a model this segment did not use at all is dropped.
+    }).filter((m) => (ccShare.get(m.model) ?? 0) > 0);
     sessionTotals = emptyTotals();
     for (const m of modelUsage) {
       sessionTotals.inputTokens += m.inputTokens;
@@ -345,9 +357,16 @@ function buildDaily(sessions: SessionSummary[]): DailySummary[] {
     .sort((a, b) => a.day.localeCompare(b.day) || a.user.localeCompare(b.user));
 }
 
-/** Identity of one account-segment of a session, for per-segment bookkeeping. */
-function segmentKey(provider: UsageProvider, sessionId: string, user: string): string {
-  return `${provider}:${sessionId}\u0000${user}`;
+/**
+ * Identity of one account-segment of a session, for per-segment bookkeeping.
+ *
+ * Keyed by the segment's ORDINAL, not by the resolved user: two segments can
+ * resolve to the same identity — both to `unknown-codex-account`, or both to the
+ * same fallback work email — and a user-keyed map then silently drops one
+ * segment's records, leaving it with zero active hours.
+ */
+function segmentKey(provider: UsageProvider, sessionId: string, index: number): string {
+  return `${provider}:${sessionId}#${index}`;
 }
 
 /**
@@ -424,6 +443,9 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   // gave every segment the whole session's hours (0.5h became 2 x 0.5h).
   const built: SessionSummary[] = [];
   const segRecords = new Map<string, UsageRecord[]>();
+  // summary -> its segment key, so the active-time lookup cannot depend on the
+  // resolved user (which two segments may share).
+  const builtKeys = new Map<SessionSummary, string>();
   for (const recs of bySession.values()) {
     const sessionId = recs[0]!.sessionId;
     const provider = recs[0]!.provider;
@@ -434,9 +456,13 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
     // token still comes from ccusage.
     const shares = segments.length > 1 ? modelShares(segments) : undefined;
     segments.forEach((seg, i) => {
-      const summary = buildSession(sessionId, seg.recs, opts, seg.account, shares?.[i]);
+      const summary = buildSession(
+        sessionId, seg.recs, opts, seg.account, shares?.[i], i === segments.length - 1,
+      );
+      const key = segmentKey(provider, sessionId, i);
       built.push(summary);
-      segRecords.set(segmentKey(summary.provider, summary.sessionId, summary.user), seg.recs);
+      builtKeys.set(summary, key);
+      segRecords.set(key, seg.recs);
     });
   }
 
@@ -491,7 +517,7 @@ export function analyze(records: UsageRecord[], opts: AnalyzeOptions): AnalysisR
   const sessions = built
     .map((s) => ({
       ...s,
-      activeTimeHours: sessionActiveHours.get(segmentKey(s.provider, s.sessionId, s.user)) ?? 0,
+      activeTimeHours: sessionActiveHours.get(builtKeys.get(s) ?? "") ?? 0,
     }))
     .sort((a, b) => b.notionalCostUsd - a.notionalCostUsd);
 

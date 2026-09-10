@@ -176,14 +176,19 @@ export function recentForCwd(cwd, limit = 3) {
 const ACCOUNT_SCAN_BYTES = 512 * 1024;
 
 export function latestAccountFor(sid, provider = "claude") {
-  if (!sid) return "";
+  return latestAccountRowFor(sid, provider).account;
+}
+
+/** Like latestAccountFor, but also reports how that row proved the identity. */
+export function latestAccountRowFor(sid, provider = "claude") {
+  if (!sid) return { account: "", identitySource: "" };
   let fd;
   try {
     const file = tasksFile();
     const size = statSync(file).size;
     const start = Math.max(0, size - ACCOUNT_SCAN_BYTES);
     const len = size - start;
-    if (len <= 0) return "";
+    if (len <= 0) return { account: "", identitySource: "" };
     const buf = Buffer.allocUnsafe(len);
     fd = openSync(file, "r");
     readSync(fd, buf, 0, len, start);
@@ -198,6 +203,7 @@ export function latestAccountFor(sid, provider = "claude") {
     // A partial first line (we cut mid-record) just fails JSON.parse and is skipped.
     let bestTs = "";
     let best = "";
+    let bestSource = "";
     for (const line of lines) {
       let r;
       try { r = JSON.parse(line); } catch { continue; }
@@ -205,13 +211,17 @@ export function latestAccountFor(sid, provider = "claude") {
       const rowProvider = r.provider === "codex" ? "codex" : "claude";
       if (rowProvider !== provider) continue;
       const ts = typeof r.ts === "string" ? r.ts : "";
-      if (best === "" || ts >= bestTs) { bestTs = ts; best = String(r.account); }
+      if (best === "" || ts >= bestTs) {
+        bestTs = ts;
+        best = String(r.account);
+        bestSource = typeof r.identitySource === "string" ? r.identitySource : "";
+      }
     }
-    if (best) return best;
+    if (best) return { account: best, identitySource: bestSource };
   } catch { /* no file / unreadable → treat as "unknown" */ } finally {
     if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
   }
-  return "";
+  return { account: "", identitySource: "" };
 }
 
 // Per-session account capture from the matching provider's authenticated
@@ -228,10 +238,14 @@ export function captureAccount(sid, cwd, provider = "claude") {
   try {
     const account = readProviderEmail(provider);
     if (!account.includes("@")) return;
-    if (latestAccountFor(sid, provider) === account) return; // unchanged → no row
+    const identitySource = provider === "codex" ? "codex-id-token" : "claude-oauth";
+    const last = latestAccountRowFor(sid, provider);
+    // Compare the identity SOURCE too. Comparing only the address suppressed the
+    // capture that would have upgraded an unverified Codex row to a verified one,
+    // so the session kept failing closed as "unknown-codex-account".
+    if (last.account === account && last.identitySource === identitySource) return;
     appendRow({
-      schemaVersion: 1, provider, sessionId: sid, account, cwd,
-      identitySource: provider === "codex" ? "codex-id-token" : "claude-oauth",
+      schemaVersion: 1, provider, sessionId: sid, account, cwd, identitySource,
       ts: new Date().toISOString(), src: "hook-acct",
     });
   } catch { /* ignore */ }

@@ -169,3 +169,46 @@ test("promptSubmit captures the account even when the project filter short-circu
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a capture that upgrades the identity source is written, not suppressed", () => {
+  const dir = sandbox();
+  try {
+    const codexHome = join(dir, "codex");
+    mkdirSync(codexHome, { recursive: true });
+    // A minimal unsigned JWT: captureAccount only reads the email claim.
+    const claim = Buffer.from(JSON.stringify({ email: "c@nnb24.de" })).toString("base64url");
+    writeFileSync(
+      join(codexHome, "auth.json"),
+      JSON.stringify({ tokens: { id_token: `h.${claim}.s` } }),
+    );
+    // History written by an older build: same account, NO identitySource. The
+    // idempotence check must not read that as "unchanged", or the verified
+    // capture never lands and the session keeps failing closed as unknown.
+    writeFileSync(
+      join(dir, "claude", "cc-usage", "tasks.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1, provider: "codex", sessionId: "s-upgrade",
+        account: "c@nnb24.de", ts: "2026-01-01T00:00:00.000Z", src: "hook-acct",
+      })}\n`,
+    );
+
+    const capture = `
+      const { captureAccount } = await import(${JSON.stringify(stateModule)});
+      captureAccount("s-upgrade", "/tmp/proj", "codex");
+    `;
+    run(dir, capture, { CODEX_HOME: codexHome });
+
+    const acct = rows(dir).filter((r) => r.account && r.provider === "codex");
+    assert.equal(acct.length, 2, "the verified capture must be appended, not suppressed");
+    assert.equal(acct[1].identitySource, "codex-id-token");
+
+    // ...and running it again now that the sources match must NOT append.
+    run(dir, capture, { CODEX_HOME: codexHome });
+    assert.equal(
+      rows(dir).filter((r) => r.account && r.provider === "codex").length, 2,
+      "a repeat with the same source must still be silent",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

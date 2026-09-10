@@ -440,3 +440,99 @@ test("collapsing repeats keeps the strongest identity evidence, not the first ro
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("two segments that resolve to the SAME identity keep their own hours", () => {
+  // Both accounts are unverified Codex rows, so both segments resolve to
+  // "unknown-codex-account". Keying segment bookkeeping by the resolved user
+  // made the second overwrite the first.
+  const mk = (iso: string): UsageRecord => ({
+    ...rec("s-collide", iso),
+    provider: "codex",
+    model: "gpt-5.6-sol",
+  });
+  // Deliberately unequal segment durations: with equal ones a collision still
+  // satisfies conservation by accident.
+  const recs = [
+    mk("2026-07-13T10:00:00"), mk("2026-07-13T10:10:00"), mk("2026-07-13T10:25:00"),
+    mk("2026-07-13T11:10:00"), mk("2026-07-13T11:15:00"),
+  ];
+  const base = {
+    user: "fallback@nnb24.de",
+    providerUsers: { claude: "c@nnb24.de", codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+  };
+  const whole = analyze(recs, base);
+  const split = analyze(recs, {
+    ...base,
+    sessionAccounts: new Map([[
+      "codex:s-collide",
+      [
+        { account: "x@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+        { account: "y@nnb24.de", ts: new Date("2026-07-13T11:00:00").toISOString() },
+      ],
+    ]]),
+  });
+
+  assert.equal(split.sessions.length, 2, "both segments are still produced");
+  assert.equal(new Set(split.sessions.map((s) => s.user)).size, 1, "both resolve to one identity");
+
+  // Compare against the UNSPLIT run, not against this run's own daily total.
+  // On a collision the daily rollup is computed from the same clobbered grouping,
+  // so it drops by exactly as much as the segments do and the two agree while
+  // both are wrong — which is how the first version of this test passed.
+  const wholeHours = whole.sessions.reduce((a, s) => a + s.activeTimeHours, 0);
+  const splitHours = split.sessions.reduce((a, s) => a + s.activeTimeHours, 0);
+  assert.ok(wholeHours > 0, "sanity: the fixture has active time");
+  assert.equal(
+    splitHours, wholeHours,
+    "splitting must not lose hours when both segments resolve to the same identity",
+  );
+  // Tokens must survive the same way.
+  assert.equal(
+    split.sessions.reduce((a, s) => a + s.totals.totalTokens, 0),
+    whole.sessions.reduce((a, s) => a + s.totals.totalTokens, 0),
+  );
+});
+
+test("apportioning a split conserves the authoritative token count exactly", () => {
+  // One token per field: rounding each segment independently turned 1 into 1+1.
+  const mk = (iso: string): UsageRecord => ({
+    ...rec("s-round", iso), model: "claude-sonnet-4", inputTokens: 1, outputTokens: 0,
+  });
+  const result = analyze(
+    [mk("2026-07-13T10:00:00"), mk("2026-07-13T11:10:00")],
+    {
+      user: "a@nnb24.de",
+      since: new Date("2026-07-13T00:00:00"),
+      until: new Date("2026-07-14T00:00:00"),
+      idleGapMs: 30 * 60_000,
+      jira: { scanCommits: false },
+      sessionAccounts: new Map([[
+        "claude:s-round",
+        [
+          { account: "a@nnb24.de", ts: new Date("2026-07-13T09:00:00").toISOString() },
+          { account: "b@nnb24.de", ts: new Date("2026-07-13T11:00:00").toISOString() },
+        ],
+      ]]),
+      ccusageCost: new Map([["s-round", {
+        totalCostUsd: 3,
+        totals: { inputTokens: 3, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 4 },
+        models: [{
+          model: "claude-sonnet-4", provider: "claude" as const,
+          inputTokens: 3, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0,
+          totalTokens: 4, costUsd: 3, costAvailable: true,
+        }],
+      }]]),
+    },
+  );
+  assert.equal(result.sessions.length, 2);
+  const sum = (f: (s: (typeof result.sessions)[number]) => number) =>
+    result.sessions.reduce((a, s) => a + f(s), 0);
+  assert.equal(sum((s) => s.totals.inputTokens), 3, "input must sum to the authoritative 3");
+  assert.equal(sum((s) => s.totals.outputTokens), 1, "output must sum to the authoritative 1");
+  assert.equal(sum((s) => s.totals.totalTokens), 4);
+  assert.equal(Math.round(sum((s) => s.notionalCostUsd) * 100) / 100, 3);
+});

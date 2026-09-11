@@ -23,6 +23,7 @@ import {
 } from "./core/collector.mjs";
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
+import { refreshOpenIssues } from "./core/issues.mjs";
 import { verifyToken } from "./core/verify.mjs";
 import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
@@ -330,6 +331,9 @@ function runHook(sub, payload) {
   if (sub === "session-start") { const o = sessionStart(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "prompt-submit") { const o = promptSubmit(payload); if (o) process.stdout.write(JSON.stringify(o)); return; }
   if (sub === "autoupdate-worker") { runUpdateWorker(); return; }
+  // Detached child spawned by scheduleRefresh(): refills the open-issue cache
+  // out of band, so no session start ever waits on the Jira gateway.
+  if (sub === "issues-refresh") { refreshOpenIssues(); return; }
   if (sub === "session-end") { runCollectorDetached(syncArgs("1", false)); }
 }
 
@@ -347,7 +351,7 @@ function help(topic) {
   doctor                                    health check (no upload)
   config | contract | migrate               show config / capabilities / migrate token
   refresh | uninstall [--purge --yes]       relink / remove the launcher
-  hook <session-start|prompt-submit|session-end>   internal (called by hooks.json)`);
+  hook <session-start|prompt-submit|session-end|issues-refresh>   internal (called by hooks.json)`);
 }
 
 // -------------------------------------------------------------------- dispatch

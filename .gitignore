@@ -28,3 +28,6 @@ PLANS.md
 
 # never commit local-only overrides
 *.local.ts
+
+# scratch — agent working notes, never published
+.superpowers/

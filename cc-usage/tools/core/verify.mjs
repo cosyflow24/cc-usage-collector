@@ -11,8 +11,11 @@ export function whoamiUrl(ingestUrl) {
 // `operator` is the employee the token uploads AS. null means the token names
 // nobody, which is fine for a personal account and fatal for a shared one — the
 // ingest route rejects a shared-account upload from an operator-less token.
+// `sharedAccounts` says WHICH of enrolledEmails are shared, so a caller can tell
+// those two cases apart instead of describing both and leaving the user to
+// guess. Absent on an older dashboard → [] → "nothing known to be shared".
 export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
-  if (!token) return { verdict: "rejected", enrolledEmails: [], operator: null };
+  if (!token) return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [] };
   let res;
   try {
     res = await fetchImpl(whoamiUrl(ingestUrl), {
@@ -21,12 +24,12 @@ export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeout
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    return { verdict: "unreachable", enrolledEmails: [], operator: null };
+    return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [] };
   }
   if (res.status === 401 || res.status === 403) {
-    return { verdict: "rejected", enrolledEmails: [], operator: null };
+    return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [] };
   }
-  if (!res.ok) return { verdict: "unreachable", enrolledEmails: [], operator: null };
+  if (!res.ok) return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [] };
   let body = {};
   try { body = await res.json(); } catch { /* tolerate non-JSON */ }
   const emails = Array.isArray(body.enrolledEmails) ? body.enrolledEmails.map(String) : [];
@@ -34,5 +37,74 @@ export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeout
   // as null so an out-of-date deployment degrades to "unknown", never to a wrong
   // claim about who the uploads are attributed to.
   const operator = typeof body.operator === "string" && body.operator ? body.operator : null;
-  return { verdict: "ok", enrolledEmails: emails, operator };
+  // Which of those accounts are SHARED. An older dashboard omits the field, and
+  // the empty list it degrades to is the honest answer there: "nothing is known
+  // to be shared", which makes doctor fall back to describing both cases instead
+  // of asserting the wrong one.
+  const sharedAccounts = Array.isArray(body.sharedAccounts)
+    ? body.sharedAccounts.map(String)
+    : [];
+  return { verdict: "ok", enrolledEmails: emails, operator, sharedAccounts };
+}
+
+/**
+ * Decide what a live whoami result MEANS for the account the user is signed in
+ * as right now. Pure, so the decision can be tested without a dashboard, a
+ * keyring, or a filesystem — `doctor` only renders what this returns.
+ *
+ * It exists because the old doctor printed both halves of the answer ("fine for
+ * a personal account; a SHARED account will reject uploads") and left the reader
+ * to work out which one they were in. A new colleague signed into the shared
+ * account with an operator-less token got "cc-usage doctor: healthy" and then
+ * silent 403s on every upload.
+ *
+ * Returns { level, message }:
+ *   "ok"   — uploads will be attributed, and to whom
+ *   "note" — nothing is wrong; something is worth stating (a personal account,
+ *            a non-work account that is deliberately never uploaded)
+ *   "fail" — this setup cannot upload; message says what to run
+ */
+export function attributionVerdict({
+  me = null,
+  domain = "",
+  operator = null,
+  enrolledEmails = [],
+  sharedAccounts = [],
+} = {}) {
+  const lower = (x) => String(x ?? "").toLowerCase();
+  const shared = new Set(sharedAccounts.map(lower));
+  const enrolled = new Set(enrolledEmails.map(lower));
+
+  if (!me) {
+    return { level: "note", message: "not signed in to a Claude account — nothing to attribute yet." };
+  }
+  // Checked FIRST: a personal address is never uploaded at all, so no statement
+  // about tokens or operators applies to it. Saying it plainly is the point —
+  // otherwise the silence reads as a broken install.
+  if (domain && !lower(me).endsWith(`@${lower(domain)}`)) {
+    return {
+      level: "note",
+      message: `${me} is not a @${domain} address — this session is kept local and never uploaded, by design.`,
+    };
+  }
+  if (enrolled.size && !enrolled.has(lower(me))) {
+    return {
+      level: "fail",
+      message: `${me} is not among this token's accounts (${enrolledEmails.join(", ")}) — its uploads are rejected. Enroll it, or ask the maintainer to extend your token.`,
+    };
+  }
+  if (shared.has(lower(me))) {
+    return operator
+      ? { level: "ok", message: `${me} is shared; your usage is recorded under ${operator}.` }
+      : {
+          level: "fail",
+          message: `${me} is a SHARED account and this token names nobody — every upload is rejected (403). Run: cc-usage login, and give your own @${domain || "work"} address when it asks who you are.`,
+        };
+  }
+  // Personal work account. The operator is irrelevant here: attribution resolves
+  // through the account-to-employee mapping, so naming one changes nothing.
+  return {
+    level: "note",
+    message: `${me} is a personal work account; usage is attributed through the account, not through the token.`,
+  };
 }

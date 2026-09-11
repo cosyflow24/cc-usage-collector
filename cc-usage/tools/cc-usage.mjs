@@ -7,7 +7,8 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  STATE_DIR, DEFAULT_INGEST_URL, jsonConfigFile, readConfig, writeConfig, readOauthEmail,
+  STATE_DIR, DEFAULT_INGEST_URL, DEFAULT_WORK_DOMAIN,
+  jsonConfigFile, readConfig, writeConfig, readOauthEmail,
   readCodexOauthEmail,
   resolverPath, registryFile,
 } from "./core/config.mjs";
@@ -24,7 +25,7 @@ import {
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
 import { refreshOpenIssues } from "./core/issues.mjs";
-import { verifyToken } from "./core/verify.mjs";
+import { attributionVerdict, verifyToken } from "./core/verify.mjs";
 import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
@@ -262,13 +263,24 @@ async function doctor() {
         // attributed through the account-to-employee mapping, not through this
         // value, so calling it "attributed to" would be wrong there.
         ok(`token belongs to: ${live.operator} (decides attribution on a shared account)`);
-      } else {
-        out("     attributed to: (none) — fine for a personal account; a SHARED account will reject uploads until the token names you. Re-run cc-usage login and give your own work email.");
       }
-      const me = readOauthEmail();
-      if (me && live.enrolledEmails.length && !live.enrolledEmails.includes(me)) {
-        out(`     note: current Claude account ${me} is not among the token's accounts — an admin may need to link it.`);
-      }
+      // The verdict a new colleague actually needs, DECIDED rather than
+      // described. Until the dashboard reported which accounts are shared, this
+      // could only recite "fine for a personal account, fatal for a shared one"
+      // and leave the reader to work out which they had - so a setup that would
+      // 403 on every upload still printed "cc-usage doctor: healthy". The
+      // decision itself is a pure function so it can be tested without a
+      // dashboard; this only renders it.
+      const verdict = attributionVerdict({
+        me: readOauthEmail(),
+        domain: cfg.workDomain || DEFAULT_WORK_DOMAIN,
+        operator: live.operator,
+        enrolledEmails: live.enrolledEmails,
+        sharedAccounts: live.sharedAccounts,
+      });
+      if (verdict.level === "fail") nope(verdict.message);
+      else if (verdict.level === "ok") ok(verdict.message);
+      else out(`     ${verdict.message}`);
     } else if (live.verdict === "rejected") {
       nope("live check: the dashboard rejected the token — re-enroll and run cc-usage login");
     } else {

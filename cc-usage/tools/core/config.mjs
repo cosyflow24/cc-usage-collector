@@ -13,6 +13,15 @@ import { dirname, join } from "node:path";
 
 export const DEFAULT_INGEST_URL = "https://cc-usage.up.railway.app/api/ingest";
 
+/**
+ * Work-email domain that gates reporting. MUST stay in step with the collector
+ * bundle's own DEFAULT_WORK_DOMAIN (packages/collector/src/config.ts) — the
+ * bundle decides what is uploaded, this copy only decides what `doctor` says
+ * about it, and a drift between them would make doctor describe a gate that is
+ * not the one running.
+ */
+export const DEFAULT_WORK_DOMAIN = "nnb24.de";
+
 export const configDir = process.env.CC_USAGE_CONFIG_DIR
   || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cc-usage");
 export const jsonConfigFile = process.env.CC_USAGE_CONFIG_FILE || join(configDir, "config.json");

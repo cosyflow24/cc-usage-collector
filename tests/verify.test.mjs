@@ -20,7 +20,7 @@ test("200 → ok with enrolled emails", async () => {
   const r = await verifyToken("https://x/api/ingest", "ccu_t", {
     fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" }),
   });
-  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" });
+  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" , sharedAccounts: [] });
 });
 
 test("a dashboard that predates the operator field reports unknown, not a wrong owner", async () => {
@@ -30,7 +30,7 @@ test("a dashboard that predates the operator field reports unknown, not a wrong 
   const r = await verifyToken("https://x/api/ingest", "ccu_t", {
     fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"] }),
   });
-  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: null });
+  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: null , sharedAccounts: [] });
 });
 
 test("a non-string operator is treated as absent", async () => {

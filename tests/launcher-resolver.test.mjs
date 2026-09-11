@@ -50,6 +50,11 @@ function runSessionStart(sb, env = {}) {
       CC_USAGE_NO_AUTOUPDATE: "1",
       CC_USAGE_HEADLESS: "1",
       CC_USAGE_REGISTER_DEV: "1", // the repo checkout is a git tree; opt in for tests
+      // SessionStart now schedules a detached open-issue refresh. Pin the
+      // gateway at a path that does not exist AND opt out of the cache, so
+      // these tests neither reach the real nnb-jira nor leave a child behind.
+      CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
+      CC_USAGE_NO_ISSUE_CACHE: "1",
       ...env,
     },
   });
@@ -210,6 +215,8 @@ test("reconcile refuses to register a git checkout unless opted in", () => {
       CC_USAGE_NO_AUTOUPDATE: "1",
       CC_USAGE_HEADLESS: "1",
       CC_USAGE_REGISTER_DEV: "", // opt OUT — this repo IS a git checkout
+      CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
+      CC_USAGE_NO_ISSUE_CACHE: "1",
     },
   });
   assert.equal(r.status, 0, r.stderr);
@@ -238,6 +245,8 @@ test("sync.sh is not written when the resolver copy is missing", () => {
       CC_USAGE_NO_AUTOUPDATE: "1",
       CC_USAGE_HEADLESS: "1",
       CC_USAGE_REGISTER_DEV: "", // reconcile bails -> resolver stays absent
+      CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
+      CC_USAGE_NO_ISSUE_CACHE: "1",
     },
   });
   assert.equal(r.status, 0, r.stderr);

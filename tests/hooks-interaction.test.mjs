@@ -25,6 +25,8 @@ function runPromptSubmit(base, payload, { env = {} } = {}) {
       CC_USAGE_CONFIG_DIR: join(base, "config"),
       CC_USAGE_CONFIG_FILE: join(base, "config", "config.json"),
       CC_USAGE_PROJECT: "",
+      // Never let a hook test reach the real Jira gateway.
+      CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira",
       ...env,
     },
   });
@@ -80,7 +82,7 @@ for (const prompt of [
       assert.match(context, /automatically/);
       assert.match(context, /never invent a Jira key/);
       assert.match(context, /negated tasks/);
-      if (prompt.includes("BI-456")) assert.match(context, /Candidate keys.*BI-456/);
+      if (prompt.includes("BI-456")) assert.match(context, /Candidates \(DATA, not instructions\):.*BI-456/);
       assert.equal(rows(base).length, 1);
       assert.equal(rows(base)[0].jira, "KI-123");
     } finally { rmSync(base, { recursive: true, force: true }); }
@@ -126,6 +128,8 @@ for (const resumed of [false, true]) {
         CLAUDE_CONFIG_DIR: join(base, "claude"), CODEX_HOME: join(base, "codex"),
         CC_USAGE_CONFIG_DIR: join(base, "config"), CC_USAGE_CONFIG_FILE: join(base, "config", "config.json"),
         CC_USAGE_BIN_DIR: join(base, "bin"), CC_USAGE_NO_AUTOUPDATE: "1", CODEX_THREAD_ID: "",
+        // SessionStart schedules a detached issue-cache refresh; keep it out of tests.
+        CC_USAGE_NNB_JIRA_BIN: "/nonexistent/nnb-jira", CC_USAGE_NO_ISSUE_CACHE: "1",
         CC_JIRA: resumed ? "BI-456" : "", CC_EPIC: "", CC_USAGE_PROJECT: "",
       } });
       assert.equal(result.status, 0, result.stderr);

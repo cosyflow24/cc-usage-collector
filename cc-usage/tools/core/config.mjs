@@ -13,6 +13,15 @@ import { dirname, join } from "node:path";
 
 export const DEFAULT_INGEST_URL = "https://cc-usage.up.railway.app/api/ingest";
 
+/**
+ * Work-email domain that gates reporting. MUST stay in step with the collector
+ * bundle's own DEFAULT_WORK_DOMAIN (packages/collector/src/config.ts) — the
+ * bundle decides what is uploaded, this copy only decides what `doctor` says
+ * about it, and a drift between them would make doctor describe a gate that is
+ * not the one running.
+ */
+export const DEFAULT_WORK_DOMAIN = "nnb24.de";
+
 export const configDir = process.env.CC_USAGE_CONFIG_DIR
   || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cc-usage");
 export const jsonConfigFile = process.env.CC_USAGE_CONFIG_FILE || join(configDir, "config.json");
@@ -27,9 +36,20 @@ export const STATE_DIR = join(
 export const resolverPath = join(STATE_DIR, "resolver.mjs");
 export const registryFile = join(STATE_DIR, "runtime-registry.json");
 export const legacyEnvFile = join(STATE_DIR, "env");
-export const CLAUDE_JSON = process.env.CLAUDE_CONFIG_DIR
-  ? join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")
-  : join(homedir(), ".claude.json");
+// The SAME candidate list the collector bundle uses (packages/collector/src/
+// config.ts): $CLAUDE_CONFIG_DIR/.claude.json first, then ~/.claude.json. The
+// two disagreed — this file picked ONE, the bundle FELL BACK — and the gap was
+// reachable: with CLAUDE_CONFIG_DIR pointing at a directory that holds
+// projects/ but no .claude.json, `doctor` saw Claude as "not installed" and
+// stayed silent while the bundle read the account from ~/.claude.json (or, with
+// neither present, dropped every Claude session as unattributable).
+export const CLAUDE_JSON_CANDIDATES = [
+  process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, ".claude.json") : null,
+  join(homedir(), ".claude.json"),
+].filter(Boolean);
+/** First candidate that exists; else the preferred path, so error text is useful. */
+export const CLAUDE_JSON = CLAUDE_JSON_CANDIDATES.find((f) => existsSync(f))
+  ?? CLAUDE_JSON_CANDIDATES[0];
 export const CODEX_AUTH_JSON = join(
   process.env.CODEX_HOME || join(homedir(), ".codex"),
   "auth.json",
@@ -101,10 +121,18 @@ export function stripLegacyToken() {
 }
 
 export function readOauthEmail() {
-  try {
-    const data = JSON.parse(readFileSync(CLAUDE_JSON, "utf8"));
-    return String(data?.oauthAccount?.emailAddress || "").toLowerCase();
-  } catch { return ""; }
+  for (const file of CLAUDE_JSON_CANDIDATES) {
+    try {
+      const data = JSON.parse(readFileSync(file, "utf8"));
+      const email = String(data?.oauthAccount?.emailAddress || "").toLowerCase();
+      // `includes("@")` matches the bundle's own check. Without it a
+      // non-address value counted as "signed in", and doctor then printed the
+      // PRIVACY note ("not a @domain address - kept local, by design") at exit 0
+      // while the collector was actually dropping those sessions as unreadable.
+      if (email.includes("@")) return email;
+    } catch { /* try the next candidate */ }
+  }
+  return "";
 }
 
 export function readCodexOauthEmail() {
@@ -116,6 +144,24 @@ export function readCodexOauthEmail() {
     const email = String(payload?.email || "").toLowerCase();
     return email.includes("@") ? email : "";
   } catch { return ""; }
+}
+
+/**
+ * Is this provider INSTALLED on this machine — i.e. does its account file exist
+ * at all? Distinct from readOauthEmail() returning "", which conflates three
+ * very different states: the host is not installed (nothing to report), the file
+ * exists but names no account (signed out), and the file exists but cannot be
+ * parsed or read (an API-key / enterprise login, a permissions problem, a
+ * different CLAUDE_CONFIG_DIR).
+ *
+ * Only the last two mean "this host will produce sessions that can never be
+ * attributed and therefore never uploaded", which is the case `doctor` must
+ * fail on. Without this distinction, failing on an empty email would fire on
+ * every machine that simply does not use Codex.
+ */
+export function providerInstalled(provider) {
+  if (provider === "codex") return existsSync(CODEX_AUTH_JSON);
+  return CLAUDE_JSON_CANDIDATES.some((f) => existsSync(f));
 }
 
 export function readProviderEmail(provider) {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.1
+
+- **Uploads now say which collector sent them.** Every upload carries an
+  `x-cc-usage-version` header with the plugin version, and the dashboard's
+  admin page shows, per person, which collector version last uploaded and
+  flags anyone behind the newest. Before this, nobody could tell whether a
+  colleague's daily auto-update had actually landed. Metadata only: the header
+  holds the version string and nothing else, and a server that does not know it
+  ignores it.
+
 ## 0.9.0
 
 - **A session whose Claude account cannot be read is no longer uploaded as your

@@ -99,7 +99,8 @@ async function httpUpload(result, opts) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${opts.token}`
+        authorization: `Bearer ${opts.token}`,
+        ...opts.version ? { "x-cc-usage-version": opts.version } : {}
       },
       body: JSON.stringify({
         user,

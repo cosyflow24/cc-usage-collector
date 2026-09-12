@@ -120,10 +120,15 @@ program
       const res = await httpUpload(toUpload, {
         url: ingestUrl,
         token: ingestToken,
+        version: typeof __CC_USAGE_VERSION__ === "string" ? __CC_USAGE_VERSION__ : undefined,
       });
       process.stderr.write(`Uploaded ${res.sessions} sessions, ${res.daily} daily rows.\n`);
     }
   });
+
+// The plugin version (cc-usage/package.json), baked in by tsup's `define` at
+// build time. A dev run through tsx has none and sends no version header.
+declare const __CC_USAGE_VERSION__: string | undefined;
 
 program.parseAsync().catch((err: unknown) => {
   process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);

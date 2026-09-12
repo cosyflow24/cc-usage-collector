@@ -249,6 +249,33 @@ async function doctor() {
   const token = loadToken(cfg);
   if (token) ok("upload token set (hidden)"); else nope("no upload token — run cc-usage login");
   out(`     secret: ${secretDescription()}`);
+  // WHICH ACCOUNT IS THIS MACHINE SIGNED IN TO. Checked here, ABOVE the live
+  // dashboard call, because it is a fact about this machine: an offline or
+  // unreachable dashboard must not hide it. Both hosts, because this plugin
+  // ships a Codex manifest and a Codex-only install is a real shape - reading
+  // only ~/.claude.json gave those colleagues "not signed in" and a healthy
+  // exit code.
+  const signedIn = [
+    ["Claude", readOauthEmail()],
+    ["Codex", readCodexOauthEmail()],
+  ].filter(([, email]) => email);
+  if (token && !signedIn.length) {
+    // A FAILURE, not a note. A token exists, so this machine is set up to
+    // upload - but neither identity can be read (no oauthAccount.emailAddress,
+    // an API-key/enterprise login, an unreadable file, a different
+    // CLAUDE_CONFIG_DIR). Since 0.9.0 the collector fails CLOSED on an
+    // unreadable account, so every session is dropped as
+    // `unknown-<provider>-account` and NOTHING is ever uploaded. Printing that
+    // as an info line left doctor exiting 0 with "healthy" over a machine that
+    // silently uploads nothing for ever.
+    nope(
+      "cannot read which account you are signed in to (neither Claude nor Codex). "
+      + "Since every session's account has to be known before it may be uploaded, "
+      + "this machine uploads NOTHING. Sign in with `claude /login` (or `codex login`), "
+      + "then re-run this check.",
+    );
+  }
+
   if (token) {
     // Live introspection (read-only whoami): rejected = real failure;
     // unreachable = neutral (never a reason to drop the token).
@@ -278,13 +305,6 @@ async function doctor() {
       // silent 403s on every upload. That is the exact failure this verdict
       // exists to end, and it was fixed for one provider only.
       const domain = cfg.workDomain || DEFAULT_WORK_DOMAIN;
-      const signedIn = [
-        ["Claude", readOauthEmail()],
-        ["Codex", readCodexOauthEmail()],
-      ].filter(([, email]) => email);
-      if (!signedIn.length) {
-        out("     not signed in to Claude or Codex on this machine — nothing to attribute yet.");
-      }
       for (const [provider, me] of signedIn) {
         const verdict = attributionVerdict({
           me,
@@ -293,6 +313,7 @@ async function doctor() {
           operator: live.operator,
           enrolledEmails: live.enrolledEmails,
           sharedAccounts: live.sharedAccounts,
+          sharedKnown: live.sharedKnown,
         });
         if (verdict.level === "fail") nope(verdict.message);
         else if (verdict.level === "ok") ok(verdict.message);

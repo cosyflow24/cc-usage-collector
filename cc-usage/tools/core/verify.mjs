@@ -15,7 +15,7 @@ export function whoamiUrl(ingestUrl) {
 // those two cases apart instead of describing both and leaving the user to
 // guess. Absent on an older dashboard → [] → "nothing known to be shared".
 export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
-  if (!token) return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [] };
+  if (!token) return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [], sharedKnown: false };
   let res;
   try {
     res = await fetchImpl(whoamiUrl(ingestUrl), {
@@ -24,12 +24,12 @@ export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeout
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [] };
+    return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [], sharedKnown: false };
   }
   if (res.status === 401 || res.status === 403) {
-    return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [] };
+    return { verdict: "rejected", enrolledEmails: [], operator: null, sharedAccounts: [], sharedKnown: false };
   }
-  if (!res.ok) return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [] };
+  if (!res.ok) return { verdict: "unreachable", enrolledEmails: [], operator: null, sharedAccounts: [], sharedKnown: false };
   let body = {};
   try { body = await res.json(); } catch { /* tolerate non-JSON */ }
   const emails = Array.isArray(body.enrolledEmails) ? body.enrolledEmails.map(String) : [];
@@ -41,10 +41,14 @@ export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeout
   // the empty list it degrades to is the honest answer there: "nothing is known
   // to be shared", which makes doctor fall back to describing both cases instead
   // of asserting the wrong one.
-  const sharedAccounts = Array.isArray(body.sharedAccounts)
-    ? body.sharedAccounts.map(String)
-    : [];
-  return { verdict: "ok", enrolledEmails: emails, operator, sharedAccounts };
+  // "reported none" and "did not report" are DIFFERENT answers and must not
+  // collapse into the same empty list. An older dashboard omits the field
+  // entirely; treating that as "nothing is shared" let the verdict below state
+  // that a shared account is personal - a confident FALSE claim, worse than the
+  // hedge it replaced.
+  const sharedKnown = Array.isArray(body.sharedAccounts);
+  const sharedAccounts = sharedKnown ? body.sharedAccounts.map(String) : [];
+  return { verdict: "ok", enrolledEmails: emails, operator, sharedAccounts, sharedKnown };
 }
 
 /**
@@ -71,6 +75,8 @@ export function attributionVerdict({
   operator = null,
   enrolledEmails = [],
   sharedAccounts = [],
+  /** Did the dashboard actually report which accounts are shared? */
+  sharedKnown = true,
 } = {}) {
   const lower = (x) => String(x ?? "").toLowerCase();
   const shared = new Set(sharedAccounts.map(lower));
@@ -93,6 +99,21 @@ export function attributionVerdict({
       level: "fail",
       message: `${provider}: ${me} is not among this token's accounts (${enrolledEmails.join(", ")}) — its uploads are rejected. Enroll it at the dashboard's /enroll page, or ask the maintainer to extend your token.`,
     };
+  }
+  // The dashboard did not say. Do NOT assert either case - state both, which is
+  // what 0.8.0 did and what this function must not regress below. Asserting
+  // "personal" here was a confident false claim on a shared account, and it read
+  // as reassurance.
+  if (!sharedKnown) {
+    return operator
+      ? {
+          level: "note",
+          message: `${provider}: ${me} — this dashboard is too old to say whether the account is shared. Your token names ${operator}, so a shared account would be recorded under them.`,
+        }
+      : {
+          level: "note",
+          message: `${provider}: ${me} — this dashboard is too old to say whether the account is shared, and your token names nobody. Fine for a personal account; a SHARED account rejects every upload (403) until the token names you. Ask the maintainer to update the dashboard, then re-run this check.`,
+        };
   }
   if (shared.has(lower(me))) {
     return operator

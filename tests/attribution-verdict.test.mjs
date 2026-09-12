@@ -84,14 +84,44 @@ test("case differences never change the verdict", () => {
   assert.equal(v.level, "fail", "an upper-case sign-in must not read as a different account");
 });
 
-test("an older dashboard that omits sharedAccounts never invents a failure", () => {
-  // sharedAccounts: [] is what an out-of-date deployment degrades to. Claiming
-  // "shared and broken" there would be a wrong assertion, not a safe default.
+test("an older dashboard makes the verdict HEDGE, not assert the wrong case", () => {
+  // The previous version of this test asserted only `notEqual(level,"fail")`,
+  // which passes whether the message hedges or states a confident falsehood.
+  // It could not detect the defect it was named after — and the defect was
+  // real: with sharedAccounts absent, a SHARED account was being reported as
+  // "a personal work account".
   const v = attributionVerdict({
     me: SHARED, domain: "nnb24.de", operator: null,
-    enrolledEmails: [SHARED], sharedAccounts: [],
+    enrolledEmails: [SHARED], sharedAccounts: [], sharedKnown: false,
   });
   assert.notEqual(v.level, "fail");
+  assert.doesNotMatch(
+    v.message, /is a personal work account/,
+    "must not assert the account is personal when the dashboard never said so",
+  );
+  assert.match(v.message, /too old to say/, "must say the answer is unknown");
+  assert.match(v.message, /SHARED account rejects every upload/,
+    "and must still state the shared-account consequence, as 0.8.0 did");
+});
+
+test("an older dashboard with an operator-bearing token still hedges, and names the person", () => {
+  const v = attributionVerdict({
+    me: SHARED, domain: "nnb24.de", operator: "yu.zha@nnb24.de",
+    enrolledEmails: [SHARED], sharedAccounts: [], sharedKnown: false,
+  });
+  assert.notEqual(v.level, "fail");
+  assert.match(v.message, /too old to say/);
+  assert.match(v.message, /yu\.zha@nnb24\.de/);
+});
+
+test("a CURRENT dashboard that reports no shared accounts still decides", () => {
+  // sharedKnown defaults to true: an empty list from a dashboard that DOES
+  // report the field is a real answer, and must not be hedged away.
+  const v = attributionVerdict({
+    me: "yu.zha@nnb24.de", domain: "nnb24.de", operator: null,
+    enrolledEmails: ["yu.zha@nnb24.de"], sharedAccounts: [],
+  });
+  assert.match(v.message, /is a personal work account/);
 });
 
 test("not signed in is a note, not a crash", () => {

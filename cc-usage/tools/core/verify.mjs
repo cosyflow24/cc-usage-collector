@@ -66,6 +66,7 @@ export async function verifyToken(ingestUrl, token, { fetchImpl = fetch, timeout
  */
 export function attributionVerdict({
   me = null,
+  provider = "Claude",
   domain = "",
   operator = null,
   enrolledEmails = [],
@@ -76,7 +77,7 @@ export function attributionVerdict({
   const enrolled = new Set(enrolledEmails.map(lower));
 
   if (!me) {
-    return { level: "note", message: "not signed in to a Claude account — nothing to attribute yet." };
+    return { level: "note", message: `not signed in to a ${provider} account — nothing to attribute yet.` };
   }
   // Checked FIRST: a personal address is never uploaded at all, so no statement
   // about tokens or operators applies to it. Saying it plainly is the point —
@@ -84,27 +85,33 @@ export function attributionVerdict({
   if (domain && !lower(me).endsWith(`@${lower(domain)}`)) {
     return {
       level: "note",
-      message: `${me} is not a @${domain} address — this session is kept local and never uploaded, by design.`,
+      message: `${provider}: ${me} is not a @${domain} address — kept local and never uploaded, by design.`,
     };
   }
   if (enrolled.size && !enrolled.has(lower(me))) {
     return {
       level: "fail",
-      message: `${me} is not among this token's accounts (${enrolledEmails.join(", ")}) — its uploads are rejected. Enroll it, or ask the maintainer to extend your token.`,
+      message: `${provider}: ${me} is not among this token's accounts (${enrolledEmails.join(", ")}) — its uploads are rejected. Enroll it at the dashboard's /enroll page, or ask the maintainer to extend your token.`,
     };
   }
   if (shared.has(lower(me))) {
     return operator
-      ? { level: "ok", message: `${me} is shared; your usage is recorded under ${operator}.` }
+      ? { level: "ok", message: `${provider}: ${me} is shared; your usage is recorded under ${operator}.` }
       : {
           level: "fail",
-          message: `${me} is a SHARED account and this token names nobody — every upload is rejected (403). Run: cc-usage login, and give your own @${domain || "work"} address when it asks who you are.`,
+          // The remediation has to name the field that actually carries the
+          // operator. `cc-usage login` only asks for a TOKEN; the operator is
+          // set on the dashboard's /enroll form, in the second field ("Your own
+          // work email"). An earlier version of this message sent people back
+          // to `login`, where they re-minted the same operator-less token and
+          // stayed 403'd.
+          message: `${provider}: ${me} is a SHARED account and this token names nobody — every upload is rejected (403). Fix: open the dashboard's /enroll page, enter ${me} as the account AND your own @${domain || "work"} address in the second field ("Your own work email"), then run  cc-usage login <new-token>.`,
         };
   }
   // Personal work account. The operator is irrelevant here: attribution resolves
   // through the account-to-employee mapping, so naming one changes nothing.
   return {
     level: "note",
-    message: `${me} is a personal work account; usage is attributed through the account, not through the token.`,
+    message: `${provider}: ${me} is a personal work account; usage is attributed through the account, not through the token.`,
   };
 }

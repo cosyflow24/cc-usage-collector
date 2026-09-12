@@ -18,6 +18,21 @@ supported `cc-usage-beta` or `nnb-jira-beta` plugin.
 > Enroll the one you use most; **both are tracked automatically** — the client
 > detects each session's account and uploads all of them, and your admin links
 > both accounts to you in the dashboard. Nothing extra for you to do.
+>
+> **Signed in to a SHARED account** (one Claude login several colleagues use)?
+> Then the account email cannot say who did the work, so the enrolment page has
+> a **second** field — *"Your own work email"*. Fill it in with **your** address.
+> Every row your machine uploads is stamped with it, so your usage stays yours
+> and is never merged with your colleagues'. It only works if you are already on
+> the employee roster; if the page says you are not, ask the maintainer to add
+> you and enroll again. Leave that field empty on a shared account and every
+> upload is rejected with a 403 — `/cc-usage-doctor` tells you so in as many
+> words.
+>
+> **Signed in to a private (non-work) account?** Nothing is uploaded, ever. The
+> collector checks each session's own account and keeps anything outside
+> `@nnb24.de` on your machine. That is by design, not a broken install —
+> `/cc-usage-doctor` says so explicitly.
 
 ## Install — plugin (recommended)
 

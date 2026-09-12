@@ -103,6 +103,40 @@ test("attributionVerdict tolerates being called with nothing", () => {
   assert.equal(attributionVerdict().level, "note");
 });
 
+test("a Codex-only machine gets the same verdict as a Claude one", () => {
+  // The regression: doctor read only ~/.claude.json, so a Codex-only colleague
+  // had me === "" and got the "not signed in" NOTE — doctor exited 0 and every
+  // upload 403'd. Same inputs, different provider, must be the same level.
+  const claude = attributionVerdict({
+    me: SHARED, provider: "Claude", domain: "nnb24.de", operator: null,
+    enrolledEmails: [SHARED], sharedAccounts: [SHARED],
+  });
+  const codex = attributionVerdict({
+    me: SHARED, provider: "Codex", domain: "nnb24.de", operator: null,
+    enrolledEmails: [SHARED], sharedAccounts: [SHARED],
+  });
+  assert.equal(codex.level, "fail");
+  assert.equal(codex.level, claude.level);
+  assert.match(codex.message, /^Codex:/, "a two-provider machine must say which host it means");
+  assert.match(claude.message, /^Claude:/);
+});
+
+test("the shared-account remedy names the field that actually carries the operator", () => {
+  // `cc-usage login` only asks for a TOKEN. The operator is set on the /enroll
+  // form's second field. An earlier message sent people to `login`, where they
+  // re-minted the same operator-less token and stayed 403'd.
+  const v = attributionVerdict({
+    me: SHARED, domain: "nnb24.de", operator: null,
+    enrolledEmails: [SHARED], sharedAccounts: [SHARED],
+  });
+  assert.match(v.message, /\/enroll/, "must send the user to the enrolment page");
+  assert.match(v.message, /Your own work email/, "must name the field verbatim");
+  assert.doesNotMatch(
+    v.message, /cc-usage login,/,
+    "must not imply `cc-usage login` asks who you are — it does not",
+  );
+});
+
 test("the doctor copy of the work domain matches the bundle's", () => {
   // Two constants, two languages, one gate. The bundle decides what uploads;
   // config.mjs only decides what doctor SAYS about it. A drift would make

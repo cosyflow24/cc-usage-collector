@@ -23,6 +23,15 @@ Steps:
    Tell the user: enter the **Max** account email (the short
    `lastname@nnb24.de`) on the page, copy the `ccu_…` token it shows, and paste
    it into the terminal prompt (input is hidden).
+
+   If they are signed in to a **shared** Claude account (one login several
+   colleagues use), they must ALSO fill the page's second field, *"Your own work
+   email"*, with their own `@nnb24.de` address — the account email cannot say
+   who did the work, and a token minted without it is rejected with a 403 on
+   every upload. That field exists only on the web form; `cc-usage login` itself
+   asks for a token and nothing else, so re-running it cannot fix a token that
+   names nobody. They must already be on the employee roster; if the page says
+   otherwise, the maintainer adds them first.
 2. If the user pasted a token into the chat anyway ($ARGUMENTS non-empty):
    do NOT store it. Tell them the token is now in chat history and must be
    treated as burned — revoke/re-enroll on the dashboard and repeat step 1

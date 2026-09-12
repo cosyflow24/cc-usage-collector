@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0
+
+- **A session whose Claude account cannot be read is no longer uploaded as your
+  work address.** The Claude branch fell back to `CC_USAGE_USER`, which the
+  launcher sets to your ENROLLED work email — so when `~/.claude.json` was
+  missing or unreadable, the session was labelled with that address, passed the
+  work-domain gate, and uploaded, whatever account had actually produced it. The
+  Codex branch already failed closed; Claude now does too. An unknown account
+  stays unknown and is kept local. An explicit `--user` still wins.
+- **`cc-usage doctor` now decides whether this machine can upload, instead of
+  describing both possibilities.** Signed in to a SHARED account with a token
+  that names nobody used to print `healthy`, followed by silent 403s on every
+  upload — doctor could not tell a shared account from a personal one. The
+  dashboard now reports which accounts are shared, so the verdict is stated:
+  which host, which account, and the exact remedy. A work account the token does
+  not cover is a failure too (it was a note, so doctor exited 0 while every
+  upload was rejected), and a private account is stated as deliberately never
+  uploaded rather than passed over in silence.
+- **doctor judges Codex as well as Claude.** It read only `~/.claude.json`, so a
+  Codex-only install got "not signed in" and the same misleading `healthy`.
+- **The shared-account remedy now names the field that carries it.** The message
+  used to send people to `cc-usage login`, which only asks for a token — they
+  re-minted the same operator-less token and stayed 403'd. It points at the
+  enrolment page's second field, "Your own work email".
+- README, `docs/INSTALL.md` and `/cc-usage-login` document the shared-account
+  field and the private-account rule. Both were silent on them.
+
 ## 0.8.0
 
 - Attribution can now suggest a task that was NEVER bound in this folder. The

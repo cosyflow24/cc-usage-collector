@@ -271,16 +271,33 @@ async function doctor() {
       // 403 on every upload still printed "cc-usage doctor: healthy". The
       // decision itself is a pure function so it can be tested without a
       // dashboard; this only renders it.
-      const verdict = attributionVerdict({
-        me: readOauthEmail(),
-        domain: cfg.workDomain || DEFAULT_WORK_DOMAIN,
-        operator: live.operator,
-        enrolledEmails: live.enrolledEmails,
-        sharedAccounts: live.sharedAccounts,
-      });
-      if (verdict.level === "fail") nope(verdict.message);
-      else if (verdict.level === "ok") ok(verdict.message);
-      else out(`     ${verdict.message}`);
+      // BOTH hosts, not just Claude. This plugin ships a Codex manifest and the
+      // README documents a Codex install, so a Codex-only colleague is a real
+      // install shape - and reading only ~/.claude.json gave them me === "",
+      // the "not signed in" note, and `cc-usage doctor: healthy` followed by
+      // silent 403s on every upload. That is the exact failure this verdict
+      // exists to end, and it was fixed for one provider only.
+      const domain = cfg.workDomain || DEFAULT_WORK_DOMAIN;
+      const signedIn = [
+        ["Claude", readOauthEmail()],
+        ["Codex", readCodexOauthEmail()],
+      ].filter(([, email]) => email);
+      if (!signedIn.length) {
+        out("     not signed in to Claude or Codex on this machine — nothing to attribute yet.");
+      }
+      for (const [provider, me] of signedIn) {
+        const verdict = attributionVerdict({
+          me,
+          provider,
+          domain,
+          operator: live.operator,
+          enrolledEmails: live.enrolledEmails,
+          sharedAccounts: live.sharedAccounts,
+        });
+        if (verdict.level === "fail") nope(verdict.message);
+        else if (verdict.level === "ok") ok(verdict.message);
+        else out(`     ${verdict.message}`);
+      }
     } else if (live.verdict === "rejected") {
       nope("live check: the dashboard rejected the token — re-enroll and run cc-usage login");
     } else {

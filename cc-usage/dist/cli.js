@@ -4114,10 +4114,18 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
   const ccusageCost = await fetchCcusageCost(since, until);
   const result = analyze(records, {
     user,
+    // BOTH providers fail closed. Codex already did; Claude did not, and the
+    // asymmetry was a hole: `?? user` fell back to resolveUser(), which
+    // returns CC_USAGE_USER - injected by the launcher as the ENROLLED WORK
+    // EMAIL (tools/core/collector.mjs). So a session whose real account could
+    // not be read (~/.claude.json missing, unreadable, or a different
+    // CLAUDE_CONFIG_DIR) was labelled with the work address, passed
+    // isWorkAccount(), and uploaded - whatever account actually produced it.
+    // Unknown now stays unknown: analyze() falls through to
+    // `unknown-<provider>-account`, which the work-domain gate drops.
+    // `--user` still wins, because that is an explicit human declaration.
     providerUsers: opts.user ? { claude: user, codex: user } : {
-      claude: resolveAccountEmail() ?? user,
-      // Fail closed: an unreadable/missing Codex identity must never borrow
-      // the Claude work email and thereby pass the upload work-domain gate.
+      claude: resolveAccountEmail(),
       codex: resolveCodexAccountEmail()
     },
     since,

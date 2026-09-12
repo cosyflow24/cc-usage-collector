@@ -12,6 +12,16 @@ Claude Code only.
 > `first.last@` + Max `lastname@`)? Enroll the one you use most — **both are
 > tracked automatically** (the client uploads every account; your admin links
 > them to you in the dashboard).
+>
+> **On a SHARED account** (one login several colleagues use), also fill the
+> second field, *"Your own work email"*, with **your** address: the account
+> email cannot say who did the work, so that field is what keeps your usage
+> yours. You must already be on the employee roster. Leave it empty and every
+> upload is rejected with a 403.
+>
+> **On a private (non-work) account** nothing is uploaded at all — the collector
+> checks each session's own account and keeps everything outside `@nnb24.de` on
+> your machine.
 
 ## First time — plugin (recommended)
 

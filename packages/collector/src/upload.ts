@@ -72,7 +72,9 @@ function wireDaily(d: DailySummary) {
 
 export async function httpUpload(
   result: AnalysisResult,
-  opts: { url: string; token: string },
+  // version: the plugin version, sent as `x-cc-usage-version` so the dashboard
+  // can show who still runs an old collector. Absent in a dev run.
+  opts: { url: string; token: string; version?: string },
 ): Promise<{ sessions: number; daily: number }> {
   const byUser = new Map<string, { sessions: SessionSummary[]; daily: DailySummary[] }>();
   const bucket = (u: string) => {
@@ -129,6 +131,7 @@ export async function httpUpload(
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${opts.token}`,
+        ...(opts.version ? { "x-cc-usage-version": opts.version } : {}),
       },
       body: JSON.stringify({
         user,

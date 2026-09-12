@@ -122,6 +122,82 @@ test("the reverse pairing fails too", () => {
   assert.notEqual(status, 0);
 });
 
+test("doctor looks where the COLLECTOR looks — CLAUDE_CONFIG_DIR, then $HOME", () => {
+  // The shape cycle 3 found: CLAUDE_CONFIG_DIR holds projects/ but no
+  // .claude.json, while ~/.claude.json exists. doctor picked ONE path and the
+  // collector bundle FELL BACK, so doctor called Claude "not installed", said
+  // nothing, and exited 0 — while the bundle read that account and uploaded
+  // under it. The two must agree on where the file is.
+  const dir = mkdtempSync(join(tmpdir(), "ccu-doctor-split-"));
+  const claudeCfg = join(dir, "claude");
+  mkdirSync(join(claudeCfg, "cc-usage"), { recursive: true });
+  mkdirSync(join(claudeCfg, "projects"), { recursive: true });
+  // No .claude.json in CLAUDE_CONFIG_DIR; one in HOME.
+  writeFileSync(
+    join(dir, ".claude.json"),
+    JSON.stringify({ oauthAccount: { emailAddress: "home@nnb24.de" } }),
+  );
+  const res = spawnSync(process.execPath, [cli, "doctor"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: dir,
+      CLAUDE_CONFIG_DIR: claudeCfg,
+      CODEX_HOME: join(dir, "no-codex"),
+      CC_USAGE_CONFIG_DIR: join(dir, "config"),
+      CC_USAGE_INGEST_URL: "http://127.0.0.1:9/api/ingest",
+      CC_USAGE_ALLOW_ENV_TOKEN: "1",
+      CC_USAGE_INGEST_TOKEN: "ccu_sandbox_not_a_real_token",
+    },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.doesNotMatch(out, /Claude is installed here but its account cannot be read/,
+    "the HOME fallback is where the collector reads it, so doctor must find it too");
+  assert.doesNotMatch(out, /no Claude or Codex account file found/);
+});
+
+test("providerInstalled searches BOTH candidates, not just the preferred one", () => {
+  // Deliberately distinct from the test above: there, readOauthEmail finds the
+  // HOME file and the `email ||` short-circuit means providerInstalled is never
+  // consulted — so mutating its candidate list left that test green. Here NO
+  // candidate yields an email, so the "installed?" answer is what decides, and
+  // it must be TRUE because a .claude.json does exist (in HOME).
+  const dir = mkdtempSync(join(tmpdir(), "ccu-doctor-installed-"));
+  const claudeCfg = join(dir, "claude");
+  mkdirSync(join(claudeCfg, "cc-usage"), { recursive: true });
+  // CLAUDE_CONFIG_DIR: no .claude.json.  HOME: one, naming nobody.
+  writeFileSync(join(dir, ".claude.json"), JSON.stringify({}));
+  const res = spawnSync(process.execPath, [cli, "doctor"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: dir,
+      CLAUDE_CONFIG_DIR: claudeCfg,
+      CODEX_HOME: join(dir, "no-codex"),
+      CC_USAGE_CONFIG_DIR: join(dir, "config"),
+      CC_USAGE_INGEST_URL: "http://127.0.0.1:9/api/ingest",
+      CC_USAGE_ALLOW_ENV_TOKEN: "1",
+      CC_USAGE_INGEST_TOKEN: "ccu_sandbox_not_a_real_token",
+    },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.match(out, /Claude is installed here but its account cannot be read/,
+    "the HOME .claude.json makes Claude installed, and it names nobody");
+  assert.notEqual(res.status, 0);
+});
+
+test("an emailAddress that is not an address counts as UNREADABLE, not as private", () => {
+  // The collector requires `@`; doctor did not. A non-address value made doctor
+  // treat the host as signed in and print the privacy note at exit 0, while the
+  // collector was dropping those sessions as unattributable.
+  const { out, status } = doctor({ claudeEmail: "not-an-email", codexInstalled: false });
+  assert.match(out, /Claude is installed here but its account cannot be read/);
+  assert.notEqual(status, 0);
+  assert.doesNotMatch(out, /kept local and never uploaded, by design/);
+});
+
 test("a host that is simply NOT INSTALLED is never reported as broken", () => {
   // Most colleagues do not use Codex. Failing on an absent auth.json would fire
   // on every one of those machines.

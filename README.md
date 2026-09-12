@@ -23,11 +23,19 @@ supported `cc-usage-beta` or `nnb-jira-beta` plugin.
 > Then the account email cannot say who did the work, so the enrolment page has
 > a **second** field — *"Your own work email"*. Fill it in with **your** address.
 > Every row your machine uploads is stamped with it, so your usage stays yours
-> and is never merged with your colleagues'. It only works if you are already on
+> and is never merged with your colleagues'. **The admin has to mark the account
+> as shared first** — until they do, the field is accepted and then silently
+> ignored, uploads succeed, and everyone still merges under the account email.
+> `/cc-usage-doctor` tells you which of the two states you are in. It only works if you are already on
 > the employee roster; if the page says you are not, ask the maintainer to add
 > you and enroll again. Leave that field empty on a shared account and every
 > upload is rejected with a 403 — `/cc-usage-doctor` tells you so in as many
 > words.
+>
+> **One computer login = one person.** The token lives in your own OS keyring,
+> so it names *you*. Two colleagues taking turns on the SAME computer login
+> would both upload under whoever enrolled it — the shared *Claude* account is
+> handled, a shared *computer* account is not. Use separate OS logins.
 >
 > **Signed in to a private (non-work) account?** Nothing is uploaded, ever. The
 > collector checks each session's own account and keeps anything outside

@@ -21,6 +21,11 @@ function runPromptSubmit(base, payload, { env = {} } = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
+      // HOME too, not only CLAUDE_CONFIG_DIR: the account reader falls back to
+      // ~/.claude.json exactly as the collector bundle does, so a test that
+      // leaves HOME alone reads the developer's own signed-in account and is
+      // not isolated.
+      HOME: base,
       CLAUDE_CONFIG_DIR: join(base, "claude"),
       CC_USAGE_CONFIG_DIR: join(base, "config"),
       CC_USAGE_CONFIG_FILE: join(base, "config", "config.json"),
@@ -125,6 +130,7 @@ for (const resumed of [false, true]) {
         const { sessionStart } = await import(${JSON.stringify(`file://${hooksModule}`)});
         process.stdout.write(JSON.stringify(sessionStart({session_id:"sid",cwd:${JSON.stringify(base)}})));
       `], { encoding: "utf8", env: { ...process.env,
+        HOME: base,
         CLAUDE_CONFIG_DIR: join(base, "claude"), CODEX_HOME: join(base, "codex"),
         CC_USAGE_CONFIG_DIR: join(base, "config"), CC_USAGE_CONFIG_FILE: join(base, "config", "config.json"),
         CC_USAGE_BIN_DIR: join(base, "bin"), CC_USAGE_NO_AUTOUPDATE: "1", CODEX_THREAD_ID: "",

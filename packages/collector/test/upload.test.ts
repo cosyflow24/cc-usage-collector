@@ -190,3 +190,25 @@ test("httpUpload: one account's server error does not cost the others their uplo
   assert.ok(threw, "the run must still fail, or a real outage looks like success");
   assert.match(threw ?? "", /shared@nnb24\.de \(500\)/);
 });
+
+test("httpUpload sends the collector version header only when it has one", async () => {
+  const seen: (string | null)[] = [];
+  const prev = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async (_u: string, init: { headers: Record<string, string> }) => {
+    seen.push(init.headers["x-cc-usage-version"] ?? null);
+    return new Response(JSON.stringify({ sessions: 1, daily: 0 }), { status: 200 });
+  };
+  try {
+    const result = {
+      user: "dev@nnb24.de",
+      range: { since: "2026-07-13T00:00:00Z", until: "2026-07-14T00:00:00Z" },
+      sessions: [session],
+      daily: [],
+    } as unknown as AnalysisResult;
+    await httpUpload(result, { url: "http://127.0.0.1:9/ingest", token: "t", version: "0.9.1" });
+    await httpUpload(result, { url: "http://127.0.0.1:9/ingest", token: "t" });
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = prev;
+  }
+  assert.deepEqual(seen, ["0.9.1", null]);
+});

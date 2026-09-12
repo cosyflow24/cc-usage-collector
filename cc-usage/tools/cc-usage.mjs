@@ -7,8 +7,10 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  STATE_DIR, DEFAULT_INGEST_URL, jsonConfigFile, readConfig, writeConfig, readOauthEmail,
+  STATE_DIR, DEFAULT_INGEST_URL, DEFAULT_WORK_DOMAIN,
+  jsonConfigFile, readConfig, writeConfig, readOauthEmail,
   readCodexOauthEmail,
+  providerInstalled,
   resolverPath, registryFile,
 } from "./core/config.mjs";
 import {
@@ -24,7 +26,7 @@ import {
 import { sessionStart, promptSubmit } from "./core/hooks.mjs";
 import { runUpdateWorker } from "./core/autoupdate.mjs";
 import { refreshOpenIssues } from "./core/issues.mjs";
-import { verifyToken } from "./core/verify.mjs";
+import { attributionVerdict, verifyToken } from "./core/verify.mjs";
 import { findSessions, renderContext } from "./core/context.mjs";
 import { resolveRuntime } from "./resolver.mjs";
 
@@ -109,6 +111,27 @@ async function login(args) {
     process.stderr.write("WARNING: could not reach the dashboard to verify the token; storing anyway — run cc-usage doctor once online.\n");
   } else if (check.enrolledEmails.length) {
     out(`Token verified — uploads as: ${check.enrolledEmails.join(", ")}`);
+    // "Verified" is about the TOKEN, not about whether this machine can
+    // actually upload. Enrolling a shared account without the operator field
+    // produces a token the dashboard accepts and then 403s on every upload —
+    // so login used to print a clean success at the exact moment the user got
+    // stuck, and they only found out if they later thought to run doctor. Same
+    // verdict function doctor uses, so the two cannot drift.
+    const domain = cfg.workDomain || DEFAULT_WORK_DOMAIN;
+    for (const [provider, me] of [["Claude", readOauthEmail()], ["Codex", readCodexOauthEmail()]]) {
+      if (!me) continue;
+      const verdict = attributionVerdict({
+        me,
+        provider,
+        domain,
+        operator: check.operator,
+        enrolledEmails: check.enrolledEmails,
+        sharedAccounts: check.sharedAccounts,
+        sharedKnown: check.sharedKnown,
+      });
+      if (verdict.level !== "ok") process.stderr.write(`${verdict.message}\n`);
+      else out(verdict.message);
+    }
   }
   const email = cfg.email || check.enrolledEmails[0] || readOauthEmail() || readCodexOauthEmail() || "default";
   const where = storeToken(email, token);
@@ -248,6 +271,47 @@ async function doctor() {
   const token = loadToken(cfg);
   if (token) ok("upload token set (hidden)"); else nope("no upload token — run cc-usage login");
   out(`     secret: ${secretDescription()}`);
+  // WHICH ACCOUNT IS THIS MACHINE SIGNED IN TO. Checked here, ABOVE the live
+  // dashboard call, because it is a fact about this machine: an offline or
+  // unreachable dashboard must not hide it. Both hosts, because this plugin
+  // ships a Codex manifest and a Codex-only install is a real shape - reading
+  // only ~/.claude.json gave those colleagues "not signed in" and a healthy
+  // exit code.
+  // PER PROVIDER, not "neither of them". An earlier version failed only when
+  // BOTH identities were unreadable — so a machine with a readable Codex login
+  // and an unreadable Claude one printed a Codex verdict, said nothing at all
+  // about Claude, and exited 0 with "healthy", while every Claude session was
+  // dropped as `unknown-claude-account` and uploaded nowhere. Narrowing the
+  // blast radius of a silent-total-loss bug is not fixing it.
+  //
+  // `providerInstalled` separates "this host is not on this machine" (nothing to
+  // report) from "this host is here but its account cannot be read" (every one
+  // of its sessions is unattributable and therefore never uploaded).
+  const providers = [
+    ["Claude", "claude", readOauthEmail()],
+    ["Codex", "codex", readCodexOauthEmail()],
+  ];
+  const signedIn = providers.filter(([, , email]) => email).map(([label, , email]) => [label, email]);
+  if (token) {
+    for (const [label, key, email] of providers) {
+      if (email || !providerInstalled(key)) continue;
+      nope(
+        `${label} is installed here but its account cannot be read. Since 0.9.0 a session `
+        + "whose account is unknown is never uploaded (that is deliberate — it could be a "
+        + `private account), so every ${label} session on this machine is dropped and `
+        + "uploads NOTHING. Sign in again "
+        + (key === "codex" ? "with `codex login`" : "with `/login` in Claude Code")
+        + ", then re-run this check.",
+      );
+    }
+    if (!signedIn.length && !providers.some(([, key]) => providerInstalled(key))) {
+      nope(
+        "no Claude or Codex account file found on this machine, so nothing can be attributed "
+        + "and nothing will be uploaded. Sign in to at least one host, then re-run this check.",
+      );
+    }
+  }
+
   if (token) {
     // Live introspection (read-only whoami): rejected = real failure;
     // unreachable = neutral (never a reason to drop the token).
@@ -262,12 +326,34 @@ async function doctor() {
         // attributed through the account-to-employee mapping, not through this
         // value, so calling it "attributed to" would be wrong there.
         ok(`token belongs to: ${live.operator} (decides attribution on a shared account)`);
-      } else {
-        out("     attributed to: (none) — fine for a personal account; a SHARED account will reject uploads until the token names you. Re-run cc-usage login and give your own work email.");
       }
-      const me = readOauthEmail();
-      if (me && live.enrolledEmails.length && !live.enrolledEmails.includes(me)) {
-        out(`     note: current Claude account ${me} is not among the token's accounts — an admin may need to link it.`);
+      // The verdict a new colleague actually needs, DECIDED rather than
+      // described. Until the dashboard reported which accounts are shared, this
+      // could only recite "fine for a personal account, fatal for a shared one"
+      // and leave the reader to work out which they had - so a setup that would
+      // 403 on every upload still printed "cc-usage doctor: healthy". The
+      // decision itself is a pure function so it can be tested without a
+      // dashboard; this only renders it.
+      // BOTH hosts, not just Claude. This plugin ships a Codex manifest and the
+      // README documents a Codex install, so a Codex-only colleague is a real
+      // install shape - and reading only ~/.claude.json gave them me === "",
+      // the "not signed in" note, and `cc-usage doctor: healthy` followed by
+      // silent 403s on every upload. That is the exact failure this verdict
+      // exists to end, and it was fixed for one provider only.
+      const domain = cfg.workDomain || DEFAULT_WORK_DOMAIN;
+      for (const [provider, me] of signedIn) {
+        const verdict = attributionVerdict({
+          me,
+          provider,
+          domain,
+          operator: live.operator,
+          enrolledEmails: live.enrolledEmails,
+          sharedAccounts: live.sharedAccounts,
+          sharedKnown: live.sharedKnown,
+        });
+        if (verdict.level === "fail") nope(verdict.message);
+        else if (verdict.level === "ok") ok(verdict.message);
+        else out(`     ${verdict.message}`);
       }
     } else if (live.verdict === "rejected") {
       nope("live check: the dashboard rejected the token — re-enroll and run cc-usage login");

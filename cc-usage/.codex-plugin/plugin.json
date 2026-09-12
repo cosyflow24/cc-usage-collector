@@ -1,6 +1,6 @@
 {
   "name": "cc-usage",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Unified Claude Code and Codex usage tracking with local-only task and session context recovery.",
   "author": {
     "name": "cosyflow24",

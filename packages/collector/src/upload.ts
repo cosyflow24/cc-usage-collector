@@ -88,17 +88,34 @@ export async function httpUpload(
   // CURRENTLY signed-in account, but a multi-account history buckets per-session
   // users — a personal bucket must be dropped here, not POSTed and 403'd (its
   // metadata would already have crossed the wire, and the throw aborts the run).
+  // TWO counters, because they are two different events and one of them used to
+  // be reported as the other. `unknown-<provider>-account` is what a session
+  // gets when its account could NOT BE READ; it fails isWorkAccount() like a
+  // private address does, so it was counted into skippedPersonal and reported
+  // as "non-work accounts kept local" — a reassurance that was false. Those are
+  // WORK sessions being lost, and the only user-visible trace said the opposite
+  // of what happened.
   let skippedPersonal = 0;
+  let skippedUnknown = 0;
+  const unknownUser = (u: string): boolean => /^unknown-[a-z]+-account$/.test(u);
   for (const s of result.sessions) {
+    if (unknownUser(s.user)) { skippedUnknown++; continue; }
     if (!isWorkAccount(s.user)) { skippedPersonal++; continue; }
     bucket(s.user).sessions.push(s);
   }
   for (const d of result.daily) {
-    if (!isWorkAccount(d.user)) continue;
+    if (unknownUser(d.user) || !isWorkAccount(d.user)) continue;
     bucket(d.user).daily.push(d);
   }
   if (skippedPersonal > 0) {
     process.stderr.write(`${skippedPersonal} session(s) on non-work accounts kept local (never uploaded).\n`);
+  }
+  if (skippedUnknown > 0) {
+    process.stderr.write(
+      `${skippedUnknown} session(s) had NO readable account and were NOT uploaded. `
+      + "This is not a privacy skip — the account could not be determined, so it could not be "
+      + "checked against the work domain. Run  cc-usage doctor  to see which host is affected.\n",
+    );
   }
 
   let sessions = 0;

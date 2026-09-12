@@ -98,6 +98,52 @@ test("httpUpload: wire payload is an explicit projection — fields outside the 
   );
 });
 
+test("httpUpload: a session with NO readable account is not reported as 'non-work'", async () => {
+  // `unknown-<provider>-account` fails isWorkAccount() exactly like a private
+  // address does, so it was counted into the same bucket and reported as
+  // "non-work accounts kept local" — a reassurance that is FALSE here. Those are
+  // WORK sessions being lost, and this line was their only user-visible trace.
+  const result: AnalysisResult = {
+    user: "dev@nnb24.de",
+    range: { since: "2026-07-13", until: "2026-07-14" },
+    sessions: [
+      { ...session, user: "unknown-claude-account", sessionId: "s-unknown" },
+      { ...session, user: "someone@gmail.com", sessionId: "s-private" },
+      { ...session, user: "dev@nnb24.de", sessionId: "s-work" },
+    ],
+    daily: [],
+    modelUsage: [],
+    totals,
+    notionalCostUsd: 0.3,
+    hasUnpricedCodex: false,
+  };
+
+  const sent: string[] = [];
+  const prevFetch = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async (_u: string, init: { body: string }) => {
+    sent.push(JSON.parse(init.body).user as string);
+    return { ok: true, status: 200, text: async () => "", json: async () => ({ sessions: 1, daily: 0 }) };
+  };
+  const err: string[] = [];
+  const prevWrite = process.stderr.write.bind(process.stderr);
+  (process.stderr as { write: unknown }).write = (c: string) => { err.push(String(c)); return true; };
+  try {
+    await httpUpload(result, { url: "http://ingest.test/api/ingest", token: "t" });
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = prevFetch;
+    (process.stderr as { write: unknown }).write = prevWrite;
+  }
+
+  assert.deepEqual(sent, ["dev@nnb24.de"], "only the work account may leave the machine");
+  const all = err.join("");
+  assert.match(all, /1 session\(s\) on non-work accounts kept local/,
+    "the gmail one is a privacy skip and keeps that wording");
+  assert.match(all, /1 session\(s\) had NO readable account/,
+    "the unknown one must be counted and reported SEPARATELY");
+  assert.match(all, /This is not a privacy skip/,
+    "and must say plainly that it is not the same thing");
+});
+
 test("httpUpload: one account's server error does not cost the others their upload", async () => {
   // The shared-account trigger surfaces as HTTP 500 from an older ingest build.
   // Throwing on the first bad bucket aborted the whole run, so every account

@@ -20,7 +20,12 @@ test("200 → ok with enrolled emails", async () => {
   const r = await verifyToken("https://x/api/ingest", "ccu_t", {
     fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" }),
   });
-  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de" });
+  assert.deepEqual(r, {
+    verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: "a@nnb24.de",
+    // These fixtures omit `sharedAccounts`, so the flag must read FALSE: the
+    // dashboard did not answer, which is not the same as answering "none".
+    sharedAccounts: [], sharedKnown: false,
+  });
 });
 
 test("a dashboard that predates the operator field reports unknown, not a wrong owner", async () => {
@@ -30,7 +35,31 @@ test("a dashboard that predates the operator field reports unknown, not a wrong 
   const r = await verifyToken("https://x/api/ingest", "ccu_t", {
     fetchImpl: mk(200, { ok: true, enrolledEmails: ["a@nnb24.de"] }),
   });
-  assert.deepEqual(r, { verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: null });
+  assert.deepEqual(r, {
+    verdict: "ok", enrolledEmails: ["a@nnb24.de"], operator: null,
+    sharedAccounts: [], sharedKnown: false,
+  });
+});
+
+test("a dashboard that DOES report sharedAccounts sets the flag", async () => {
+  // The distinction the verdict depends on: an empty list from a current
+  // dashboard is a real answer ("nothing is shared"); an absent field is not.
+  const r = await verifyToken("https://x/api/ingest", "ccu_t", {
+    fetchImpl: mk(200, {
+      ok: true, enrolledEmails: ["a@nnb24.de"], operator: null, sharedAccounts: [],
+    }),
+  });
+  assert.equal(r.sharedKnown, true);
+  assert.deepEqual(r.sharedAccounts, []);
+
+  const withOne = await verifyToken("https://x/api/ingest", "ccu_t", {
+    fetchImpl: mk(200, {
+      ok: true, enrolledEmails: ["a@nnb24.de"], operator: null,
+      sharedAccounts: ["a@nnb24.de"],
+    }),
+  });
+  assert.equal(withOne.sharedKnown, true);
+  assert.deepEqual(withOne.sharedAccounts, ["a@nnb24.de"]);
 });
 
 test("a non-string operator is treated as absent", async () => {

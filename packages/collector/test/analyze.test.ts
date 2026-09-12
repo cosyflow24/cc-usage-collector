@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { analyze } from "../src/analyze.ts";
+import { isWorkAccount } from "../src/config.ts";
 import { formatTable } from "../src/format.ts";
 import { loadSessionAccounts } from "../src/sidecar.ts";
 import type { UsageRecord } from "../src/types.ts";
@@ -88,6 +89,68 @@ test("provider-specific account fallback does not assign Codex to Claude", () =>
   assert.deepEqual(
     result.sessions.map((session) => `${session.provider}:${session.user}`).sort(),
     ["claude:claude@nnb24.de", "codex:codex@personal.dev"],
+  );
+});
+
+test("missing CLAUDE identity fails closed too, instead of borrowing the enrolled work email", () => {
+  // The asymmetry this pins: Codex already failed closed, Claude did not.
+  // cli.ts used `resolveAccountEmail() ?? user`, and `user` is resolveUser(),
+  // which returns CC_USAGE_USER — injected by the launcher as the ENROLLED WORK
+  // EMAIL. So a session whose real account could not be read was labelled with
+  // the work address, passed the work-domain gate, and uploaded, whatever
+  // account actually produced it. `user` here is deliberately a work address:
+  // the test is worthless if the fallback would have been rejected anyway.
+  const claude = rec("claude-id", "2026-07-13T10:00:00");
+  const result = analyze([claude], {
+    user: "enrolled@nnb24.de",
+    providerUsers: { claude: null, codex: null },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+  });
+  assert.equal(result.sessions.length, 1);
+  assert.equal(
+    result.sessions[0]!.user, "unknown-claude-account",
+    "an unreadable account must stay unknown, never become the enrolled work email",
+  );
+  assert.equal(
+    isWorkAccount(result.sessions[0]!.user), false,
+    "and the work-domain gate must therefore drop it",
+  );
+});
+
+test("an explicit --user wins over the fail-closed default (but not over a sidecar)", () => {
+  // `--user` is a human declaration, not a guess. cli.ts passes
+  // { claude: user, codex: user } in that case; this pins that it still works.
+  // It does NOT outrank a session-scoped sidecar account — analyze() resolves
+  // trustedScopedAccount first — and the second half of this test pins that,
+  // because the comment in cli.ts used to claim otherwise.
+  const claude = rec("claude-id", "2026-07-13T10:00:00");
+  const result = analyze([claude], {
+    user: "declared@nnb24.de",
+    providerUsers: { claude: "declared@nnb24.de", codex: "declared@nnb24.de" },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+  });
+  assert.equal(result.sessions[0]!.user, "declared@nnb24.de");
+
+  const withSidecar = analyze([claude], {
+    user: "declared@nnb24.de",
+    providerUsers: { claude: "declared@nnb24.de", codex: "declared@nnb24.de" },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([
+      ["claude:claude-id", [{ account: "actually@nnb24.de", providerVerified: true }]],
+    ]),
+  });
+  assert.equal(
+    withSidecar.sessions[0]!.user, "actually@nnb24.de",
+    "the account observed DURING the session outranks --user",
   );
 });
 

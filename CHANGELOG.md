@@ -24,6 +24,23 @@
   used to send people to `cc-usage login`, which only asks for a token — they
   re-minted the same operator-less token and stayed 403'd. It points at the
   enrolment page's second field, "Your own work email".
+- **A host whose account cannot be read is now a `doctor` FAILURE, per host.**
+  Failing closed is right for privacy, but it turns wrong attribution into
+  silent total loss: every session of that host is dropped and nothing is ever
+  uploaded. doctor said `healthy`.
+- **A dropped session is no longer reported as "non-work".** `unknown-<host>-account`
+  failed the work-domain check exactly like a private address, so lost WORK
+  sessions were counted into "N session(s) on non-work accounts kept local" —
+  a reassurance that said the opposite of what happened. They are counted and
+  reported separately now.
+- **`cc-usage login` states the same verdict `doctor` does.** Enrolling a shared
+  account without the operator field produced a token the dashboard accepts and
+  then rejects on every upload; login printed a clean "Token verified".
+- Addresses are canonicalised on both sides of every comparison that decides
+  attribution, including the token's own account list — a token row stored in a
+  different case was permanently rejected with no way back but re-enrolment. An
+  operator is stored with the roster's own spelling, because that column carries
+  a foreign key to the roster.
 - README, `docs/INSTALL.md` and `/cc-usage-login` document the shared-account
   field and the private-account rule. Both were silent on them.
 

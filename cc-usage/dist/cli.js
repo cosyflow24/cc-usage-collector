@@ -4123,7 +4123,10 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
     // isWorkAccount(), and uploaded - whatever account actually produced it.
     // Unknown now stays unknown: analyze() falls through to
     // `unknown-<provider>-account`, which the work-domain gate drops.
-    // `--user` still wins, because that is an explicit human declaration.
+    // `--user` wins over THIS fallback (cli passes it for both providers
+    // below); it does NOT outrank a sidecar-scoped account, which analyze()
+    // resolves first — trustedScopedAccount ?? legacyClaudeAccount ??
+    // providerUser. An earlier comment claimed more than the code does.
     providerUsers: opts.user ? { claude: user, codex: user } : {
       claude: resolveAccountEmail(),
       codex: resolveCodexAccountEmail()
@@ -4171,7 +4174,7 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-VSU4VEG7.js");
+    const { httpUpload } = await import("./upload-UR64MTKF.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken

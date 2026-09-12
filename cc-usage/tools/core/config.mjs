@@ -127,6 +127,23 @@ export function readCodexOauthEmail() {
   } catch { return ""; }
 }
 
+/**
+ * Is this provider INSTALLED on this machine — i.e. does its account file exist
+ * at all? Distinct from readOauthEmail() returning "", which conflates three
+ * very different states: the host is not installed (nothing to report), the file
+ * exists but names no account (signed out), and the file exists but cannot be
+ * parsed or read (an API-key / enterprise login, a permissions problem, a
+ * different CLAUDE_CONFIG_DIR).
+ *
+ * Only the last two mean "this host will produce sessions that can never be
+ * attributed and therefore never uploaded", which is the case `doctor` must
+ * fail on. Without this distinction, failing on an empty email would fire on
+ * every machine that simply does not use Codex.
+ */
+export function providerInstalled(provider) {
+  return existsSync(provider === "codex" ? CODEX_AUTH_JSON : CLAUDE_JSON);
+}
+
 export function readProviderEmail(provider) {
   return provider === "codex" ? readCodexOauthEmail() : readOauthEmail();
 }

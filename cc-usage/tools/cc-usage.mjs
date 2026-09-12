@@ -10,6 +10,7 @@ import {
   STATE_DIR, DEFAULT_INGEST_URL, DEFAULT_WORK_DOMAIN,
   jsonConfigFile, readConfig, writeConfig, readOauthEmail,
   readCodexOauthEmail,
+  providerInstalled,
   resolverPath, registryFile,
 } from "./core/config.mjs";
 import {
@@ -110,6 +111,27 @@ async function login(args) {
     process.stderr.write("WARNING: could not reach the dashboard to verify the token; storing anyway — run cc-usage doctor once online.\n");
   } else if (check.enrolledEmails.length) {
     out(`Token verified — uploads as: ${check.enrolledEmails.join(", ")}`);
+    // "Verified" is about the TOKEN, not about whether this machine can
+    // actually upload. Enrolling a shared account without the operator field
+    // produces a token the dashboard accepts and then 403s on every upload —
+    // so login used to print a clean success at the exact moment the user got
+    // stuck, and they only found out if they later thought to run doctor. Same
+    // verdict function doctor uses, so the two cannot drift.
+    const domain = cfg.workDomain || DEFAULT_WORK_DOMAIN;
+    for (const [provider, me] of [["Claude", readOauthEmail()], ["Codex", readCodexOauthEmail()]]) {
+      if (!me) continue;
+      const verdict = attributionVerdict({
+        me,
+        provider,
+        domain,
+        operator: check.operator,
+        enrolledEmails: check.enrolledEmails,
+        sharedAccounts: check.sharedAccounts,
+        sharedKnown: check.sharedKnown,
+      });
+      if (verdict.level !== "ok") process.stderr.write(`${verdict.message}\n`);
+      else out(verdict.message);
+    }
   }
   const email = cfg.email || check.enrolledEmails[0] || readOauthEmail() || readCodexOauthEmail() || "default";
   const where = storeToken(email, token);
@@ -255,25 +277,39 @@ async function doctor() {
   // ships a Codex manifest and a Codex-only install is a real shape - reading
   // only ~/.claude.json gave those colleagues "not signed in" and a healthy
   // exit code.
-  const signedIn = [
-    ["Claude", readOauthEmail()],
-    ["Codex", readCodexOauthEmail()],
-  ].filter(([, email]) => email);
-  if (token && !signedIn.length) {
-    // A FAILURE, not a note. A token exists, so this machine is set up to
-    // upload - but neither identity can be read (no oauthAccount.emailAddress,
-    // an API-key/enterprise login, an unreadable file, a different
-    // CLAUDE_CONFIG_DIR). Since 0.9.0 the collector fails CLOSED on an
-    // unreadable account, so every session is dropped as
-    // `unknown-<provider>-account` and NOTHING is ever uploaded. Printing that
-    // as an info line left doctor exiting 0 with "healthy" over a machine that
-    // silently uploads nothing for ever.
-    nope(
-      "cannot read which account you are signed in to (neither Claude nor Codex). "
-      + "Since every session's account has to be known before it may be uploaded, "
-      + "this machine uploads NOTHING. Sign in with `claude /login` (or `codex login`), "
-      + "then re-run this check.",
-    );
+  // PER PROVIDER, not "neither of them". An earlier version failed only when
+  // BOTH identities were unreadable — so a machine with a readable Codex login
+  // and an unreadable Claude one printed a Codex verdict, said nothing at all
+  // about Claude, and exited 0 with "healthy", while every Claude session was
+  // dropped as `unknown-claude-account` and uploaded nowhere. Narrowing the
+  // blast radius of a silent-total-loss bug is not fixing it.
+  //
+  // `providerInstalled` separates "this host is not on this machine" (nothing to
+  // report) from "this host is here but its account cannot be read" (every one
+  // of its sessions is unattributable and therefore never uploaded).
+  const providers = [
+    ["Claude", "claude", readOauthEmail()],
+    ["Codex", "codex", readCodexOauthEmail()],
+  ];
+  const signedIn = providers.filter(([, , email]) => email).map(([label, , email]) => [label, email]);
+  if (token) {
+    for (const [label, key, email] of providers) {
+      if (email || !providerInstalled(key)) continue;
+      nope(
+        `${label} is installed here but its account cannot be read. Since 0.9.0 a session `
+        + "whose account is unknown is never uploaded (that is deliberate — it could be a "
+        + `private account), so every ${label} session on this machine is dropped and `
+        + "uploads NOTHING. Sign in again "
+        + (key === "codex" ? "with `codex login`" : "with `/login` in Claude Code")
+        + ", then re-run this check.",
+      );
+    }
+    if (!signedIn.length && !providers.some(([, key]) => providerInstalled(key))) {
+      nope(
+        "no Claude or Codex account file found on this machine, so nothing can be attributed "
+        + "and nothing will be uploaded. Sign in to at least one host, then re-run this check.",
+      );
+    }
   }
 
   if (token) {

@@ -120,9 +120,12 @@ test("missing CLAUDE identity fails closed too, instead of borrowing the enrolle
   );
 });
 
-test("an explicit --user still wins over the fail-closed default", () => {
+test("an explicit --user wins over the fail-closed default (but not over a sidecar)", () => {
   // `--user` is a human declaration, not a guess. cli.ts passes
   // { claude: user, codex: user } in that case; this pins that it still works.
+  // It does NOT outrank a session-scoped sidecar account — analyze() resolves
+  // trustedScopedAccount first — and the second half of this test pins that,
+  // because the comment in cli.ts used to claim otherwise.
   const claude = rec("claude-id", "2026-07-13T10:00:00");
   const result = analyze([claude], {
     user: "declared@nnb24.de",
@@ -133,6 +136,22 @@ test("an explicit --user still wins over the fail-closed default", () => {
     jira: { scanCommits: false },
   });
   assert.equal(result.sessions[0]!.user, "declared@nnb24.de");
+
+  const withSidecar = analyze([claude], {
+    user: "declared@nnb24.de",
+    providerUsers: { claude: "declared@nnb24.de", codex: "declared@nnb24.de" },
+    since: new Date("2026-07-13T00:00:00"),
+    until: new Date("2026-07-14T00:00:00"),
+    idleGapMs: 30 * 60_000,
+    jira: { scanCommits: false },
+    sessionAccounts: new Map([
+      ["claude:claude-id", [{ account: "actually@nnb24.de", providerVerified: true }]],
+    ]),
+  });
+  assert.equal(
+    withSidecar.sessions[0]!.user, "actually@nnb24.de",
+    "the account observed DURING the session outranks --user",
+  );
 });
 
 test("missing Codex identity fails closed instead of borrowing the Claude account", () => {

@@ -62,7 +62,13 @@ async function httpUpload(result, opts) {
     return b;
   };
   let skippedPersonal = 0;
+  let skippedUnknown = 0;
+  const unknownUser = (u) => /^unknown-[a-z]+-account$/.test(u);
   for (const s of result.sessions) {
+    if (unknownUser(s.user)) {
+      skippedUnknown++;
+      continue;
+    }
     if (!isWorkAccount(s.user)) {
       skippedPersonal++;
       continue;
@@ -70,12 +76,18 @@ async function httpUpload(result, opts) {
     bucket(s.user).sessions.push(s);
   }
   for (const d of result.daily) {
-    if (!isWorkAccount(d.user)) continue;
+    if (unknownUser(d.user) || !isWorkAccount(d.user)) continue;
     bucket(d.user).daily.push(d);
   }
   if (skippedPersonal > 0) {
     process.stderr.write(`${skippedPersonal} session(s) on non-work accounts kept local (never uploaded).
 `);
+  }
+  if (skippedUnknown > 0) {
+    process.stderr.write(
+      `${skippedUnknown} session(s) had NO readable account and were NOT uploaded. This is not a privacy skip \u2014 the account could not be determined, so it could not be checked against the work domain. Run  cc-usage doctor  to see which host is affected.
+`
+    );
   }
   let sessions = 0;
   let daily = 0;

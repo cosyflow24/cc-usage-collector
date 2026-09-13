@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import test from "node:test";
 
 test("the executable bundle has exactly one shebang", () => {
@@ -10,12 +12,22 @@ test("the executable bundle has exactly one shebang", () => {
     new URL("../../../cc-usage/dist/cli.js", import.meta.url),
     "utf8",
   );
+  // Feature markers are asserted against the WHOLE shipped bundle, not against
+  // cli.js alone: tsup moves a module that two entry points share into its own
+  // chunk, so a marker leaving cli.js means "the code moved", not "the code is
+  // missing". The shebang assertions stay on cli.js, which is the file that is
+  // executed.
+  const distDir = fileURLToPath(new URL("../../../cc-usage/dist/", import.meta.url));
+  const shipped = readdirSync(distDir)
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => readFileSync(join(distDir, f), "utf8"))
+    .join("\n");
 
   assert.doesNotMatch(source, /^#!/);
   assert.equal(bundle.match(/^#!/gm)?.length, 1);
   assert.match(bundle, /^#!\/usr\/bin\/env node\n/);
-  assert.match(bundle, /codex-id-token/);
-  assert.match(bundle, /providerVerified/);
+  assert.match(shipped, /codex-id-token/);
+  assert.match(shipped, /providerVerified/);
   const pluginPackage = JSON.parse(
     readFileSync(new URL("../../../cc-usage/package.json", import.meta.url), "utf8"),
   ) as { type?: string };

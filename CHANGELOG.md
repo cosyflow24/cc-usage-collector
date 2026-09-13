@@ -7,9 +7,10 @@
   `"uploadUntagged": false` in `~/.config/cc-usage/config.json` and they stay on
   your machine instead: the sessions, their tokens and cost, and their active
   time are all withheld, and a day that consisted only of untagged work is left
-  out entirely. A day that mixes both uploads only the tagged part, active time
-  included — otherwise the withheld minutes would still be derivable from the
-  daily row.
+  out entirely. A day that mixes both uploads only the tagged part: the daily
+  row is recomputed from the tagged sessions alone, so nothing in the request
+  body encodes the withheld work. Only a real `false` opts out, and the setting
+  applies going forward — sessions already uploaded stay on the server.
 - Test fixtures use `example.com` addresses instead of a real private one.
 
 ## 0.9.1

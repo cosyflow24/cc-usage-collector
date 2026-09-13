@@ -2,8 +2,11 @@
 import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);
 import {
-  isWorkAccount
-} from "./chunk-NEB74BZI.js";
+  emptyTotals,
+  isWorkAccount,
+  mergeTotals,
+  rollupModels
+} from "./chunk-FS4HAWX2.js";
 
 // src/upload.ts
 function wireTotals(t) {
@@ -53,17 +56,33 @@ function wireDaily(d) {
 }
 function withoutUntagged(result) {
   const sessions = result.sessions.filter((s) => s.jiraKey);
-  const keptHours = /* @__PURE__ */ new Map();
+  const kept = /* @__PURE__ */ new Map();
   for (const s of sessions) {
     const key = `${s.user}\0${s.day}`;
-    keptHours.set(key, (keptHours.get(key) ?? 0) + s.activeTimeHours);
+    (kept.get(key) ?? kept.set(key, []).get(key)).push(s);
   }
   return {
     ...result,
     sessions,
     daily: result.daily.flatMap((d) => {
-      const hours = keptHours.get(`${d.user}\0${d.day}`);
-      return hours === void 0 ? [] : [{ ...d, activeTimeHours: hours }];
+      const ses = kept.get(`${d.user}\0${d.day}`);
+      if (!ses) return [];
+      const dayTotals = emptyTotals();
+      let notionalCostUsd = 0;
+      let activeTimeHours = 0;
+      for (const s of ses) {
+        mergeTotals(dayTotals, s.totals);
+        notionalCostUsd += s.notionalCostUsd;
+        activeTimeHours += s.activeTimeHours;
+      }
+      return [{
+        ...d,
+        sessions: ses.length,
+        modelUsage: rollupModels(ses),
+        totals: dayTotals,
+        notionalCostUsd,
+        activeTimeHours
+      }];
     })
   };
 }

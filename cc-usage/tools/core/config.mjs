@@ -55,6 +55,16 @@ export const CODEX_AUTH_JSON = join(
   "auth.json",
 );
 
+let warnedUploadUntagged = false;
+function warnIfNotBoolean(value) {
+  if (value === undefined || typeof value === "boolean" || warnedUploadUntagged) return;
+  warnedUploadUntagged = true;
+  process.stderr.write(
+    `cc-usage: config.json has uploadUntagged: ${JSON.stringify(value)} - only the boolean false opts out, `
+    + "so untagged sessions ARE being uploaded.\n",
+  );
+}
+
 export function readConfig() {
   let stored = {};
   if (existsSync(jsonConfigFile)) {
@@ -70,9 +80,12 @@ export function readConfig() {
     // Upload sessions that carry no Jira key (default: yes, see KI-764). Set
     // `"uploadUntagged": false` in config.json to keep untagged work local;
     // the dashboard then shows nothing for it, not even under "Unassigned".
+    // Strict: only a real `false` opts out. A typo like "false" (a string)
+    // would otherwise fail OPEN and upload everything with no signal at all,
+    // and on the hook path even stderr is discarded - so say something.
     uploadUntagged: stored.uploadUntagged === false
       ? false
-      : process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0",
+      : (warnIfNotBoolean(stored.uploadUntagged), process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0"),
   };
 }
 

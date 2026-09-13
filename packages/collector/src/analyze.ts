@@ -35,7 +35,7 @@ export interface AnalyzeOptions {
   ccusageCost?: Map<string, CcusageSessionCost> | null;
 }
 
-function emptyTotals(): TokenTotals {
+export function emptyTotals(): TokenTotals {
   return {
     inputTokens: 0,
     outputTokens: 0,
@@ -63,7 +63,7 @@ function addTokens(t: TokenTotals, r: UsageRecord): void {
   t.totalTokens += r.inputTokens + r.outputTokens + r.cacheCreationTokens + r.cacheReadTokens;
 }
 
-function mergeTotals(into: TokenTotals, from: TokenTotals): void {
+export function mergeTotals(into: TokenTotals, from: TokenTotals): void {
   into.inputTokens += from.inputTokens;
   into.outputTokens += from.outputTokens;
   into.cacheCreationTokens += from.cacheCreationTokens;
@@ -285,7 +285,7 @@ function buildSession(
 }
 
 /** Roll per-session model usage (incl cost) up into one list, sorted by tokens. */
-function rollupModels(sessions: SessionSummary[]): ModelUsage[] {
+export function rollupModels(sessions: SessionSummary[]): ModelUsage[] {
   const map = new Map<string, ModelUsage>();
   for (const s of sessions) {
     for (const mu of s.modelUsage) {

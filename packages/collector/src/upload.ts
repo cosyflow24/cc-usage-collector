@@ -1,3 +1,4 @@
+import { emptyTotals, mergeTotals, rollupModels } from "./analyze.ts";
 import { isWorkAccount } from "./config.ts";
 import type {
   AnalysisResult,
@@ -81,26 +82,48 @@ function wireDaily(d: DailySummary) {
  *    the sessions in the SAME request and rejects the whole body with 400 when
  *    a daily row has no matching session, so filtering sessions alone would
  *    fail the upload on any day that consisted only of untagged work.
- * 2. A KEPT day's `activeTimeHours` is recomputed from the kept sessions. The
- *    server rebuilds a daily row's tokens and cost from the payload's sessions
- *    but takes active time from the daily row as sent (it is daily-owned), and
- *    analyze() sums it over EVERY session of the day. Passing it through would
- *    publish the withheld work's minutes as `daily − Σ sessions` - exactly the
- *    quantity this option withholds.
+ * 2. A KEPT day is recomputed from the kept sessions - EVERY aggregate it
+ *    carries: session count, totals, cost, model list and active time.
+ *    analyze() sums each of them over every session of the day, so passing any
+ *    one through would publish the withheld work as `daily - sum(sessions)`.
+ *    The server does recompute all of them except active time, so most of this
+ *    is invisible in the table either way - but the withheld numbers would
+ *    still have travelled in the request body, and a request body is not a
+ *    place to put something you were asked not to send.
+ *
+ * The top-level `result.totals` / `notionalCostUsd` / `modelUsage` are left
+ * alone: they describe the local analysis, `httpUpload` never reads them, and
+ * the CLI prints the unfiltered run on purpose.
  */
 export function withoutUntagged(result: AnalysisResult): AnalysisResult {
   const sessions = result.sessions.filter((s) => s.jiraKey);
-  const keptHours = new Map<string, number>();
+  const kept = new Map<string, SessionSummary[]>();
   for (const s of sessions) {
     const key = `${s.user}\u0000${s.day}`;
-    keptHours.set(key, (keptHours.get(key) ?? 0) + s.activeTimeHours);
+    (kept.get(key) ?? kept.set(key, []).get(key)!).push(s);
   }
   return {
     ...result,
     sessions,
     daily: result.daily.flatMap((d) => {
-      const hours = keptHours.get(`${d.user}\u0000${d.day}`);
-      return hours === undefined ? [] : [{ ...d, activeTimeHours: hours }];
+      const ses = kept.get(`${d.user}\u0000${d.day}`);
+      if (!ses) return [];
+      const dayTotals = emptyTotals();
+      let notionalCostUsd = 0;
+      let activeTimeHours = 0;
+      for (const s of ses) {
+        mergeTotals(dayTotals, s.totals);
+        notionalCostUsd += s.notionalCostUsd;
+        activeTimeHours += s.activeTimeHours;
+      }
+      return [{
+        ...d,
+        sessions: ses.length,
+        modelUsage: rollupModels(ses),
+        totals: dayTotals,
+        notionalCostUsd,
+        activeTimeHours,
+      }];
     }),
   };
 }

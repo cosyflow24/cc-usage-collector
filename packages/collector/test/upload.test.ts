@@ -220,26 +220,32 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
   // derivable as daily - sum(sessions) - and an assertion against a daily row
   // that happened to equal the session would not notice.
   const tagged = { ...session, sessionId: "s-tagged", jiraKey: "BI-1", day: "2026-07-13", activeTimeHours: 0.5 };
+  // TWO kept sessions on the mixed day: with only one, a recompute that took
+  // the first kept session's values instead of summing them would still pass.
+  const tagged2 = { ...session, sessionId: "s-tagged2", jiraKey: "BI-2", day: "2026-07-13", activeTimeHours: 0.25 };
   const untaggedSameDay = { ...session, sessionId: "s-mixed", jiraKey: null, day: "2026-07-13", activeTimeHours: 0.75 };
   const untaggedOwnDay = { ...session, sessionId: "s-alone", jiraKey: null, day: "2026-07-14", activeTimeHours: 2 };
-  const daily = (day: string, activeTimeHours: number) => ({
+  const daily = (day: string, activeTimeHours: number, sessions: number) => ({
     day,
     user: "dev@nnb24.de",
-    sessions: 1,
-    modelUsage: [...session.modelUsage],
-    totals,
-    notionalCostUsd: 0.1,
+    sessions,
+    modelUsage: [
+      ...session.modelUsage,
+      { provider: "claude" as const, model: "withheld-model", ...totals, costUsd: 9, costAvailable: true },
+    ],
+    totals: { ...totals, totalTokens: 999 },
+    notionalCostUsd: 99,
     activeTimeHours,
   });
   const result = {
     user: "dev@nnb24.de",
     range: { since: "2026-07-13T00:00:00Z", until: "2026-07-15T00:00:00Z" },
-    sessions: [tagged, untaggedSameDay, untaggedOwnDay],
-    daily: [daily("2026-07-13", 1.25), daily("2026-07-14", 2)],
+    sessions: [tagged, tagged2, untaggedSameDay, untaggedOwnDay],
+    daily: [daily("2026-07-13", 1.25, 3), daily("2026-07-14", 2, 1)],
   } as unknown as AnalysisResult;
 
   const filtered = withoutUntagged(result);
-  assert.deepEqual(filtered.sessions.map((s) => s.sessionId), ["s-tagged"]);
+  assert.deepEqual(filtered.sessions.map((s) => s.sessionId), ["s-tagged", "s-tagged2"]);
   assert.deepEqual(
     filtered.daily.map((d) => d.day),
     ["2026-07-13"],
@@ -248,12 +254,17 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
   // The kept day must NOT carry the withheld session's minutes: the server
   // takes active time from the daily row as sent, so `daily - sum(sessions)`
   // would publish exactly the time this option withholds.
-  assert.equal(
-    filtered.daily[0]?.activeTimeHours,
-    tagged.activeTimeHours,
-    "the mixed day's active time is recomputed from the kept sessions only",
+  const kept = filtered.daily[0]!;
+  assert.equal(kept.activeTimeHours, 0.75, "active time = 0.5 + 0.25, not the day's 1.25");
+  assert.equal(kept.sessions, 2, "session count is recomputed, not the day's 3");
+  assert.equal(kept.totals.totalTokens, tagged.totals.totalTokens * 2, "tokens come from the kept sessions");
+  assert.equal(kept.notionalCostUsd, tagged.notionalCostUsd * 2, "cost comes from the kept sessions");
+  assert.deepEqual(
+    kept.modelUsage.map((m) => m.model).sort(),
+    ["claude-sonnet-4"],
+    "the withheld session's model is not listed",
   );
-  assert.equal(result.sessions.length, 3, "the input is not mutated");
+  assert.equal(result.sessions.length, 4, "the input is not mutated");
   assert.equal(result.daily[0]?.activeTimeHours, 1.25, "the input daily row is not mutated");
 });
 

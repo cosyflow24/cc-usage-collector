@@ -76,11 +76,13 @@ function withoutUntagged(result) {
         activeTimeHours += s.activeTimeHours;
       }
       return [{
-        ...d,
+        day: d.day,
+        user: d.user,
         sessions: ses.length,
         modelUsage: rollupModels(ses),
         totals: dayTotals,
         notionalCostUsd,
+        hasUnpricedCodex: ses.some((s) => !s.costAvailable),
         activeTimeHours
       }];
     })

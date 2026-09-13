@@ -236,6 +236,8 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
     totals: { ...totals, totalTokens: 999 },
     notionalCostUsd: 99,
     activeTimeHours,
+    // Not part of DailySummary: proves the rebuild does not spread the input.
+    withheldOnly: "must not survive",
   });
   const result = {
     user: "dev@nnb24.de",
@@ -260,9 +262,14 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
   assert.equal(kept.totals.totalTokens, tagged.totals.totalTokens * 2, "tokens come from the kept sessions");
   assert.equal(kept.notionalCostUsd, tagged.notionalCostUsd * 2, "cost comes from the kept sessions");
   assert.deepEqual(
-    kept.modelUsage.map((m) => m.model).sort(),
-    ["claude-sonnet-4"],
-    "the withheld session's model is not listed",
+    kept.modelUsage.map((m) => [m.model, m.totalTokens, m.costUsd]),
+    [["claude-sonnet-4", tagged.modelUsage[0]!.totalTokens * 2, tagged.modelUsage[0]!.costUsd * 2]],
+    "the model list is re-merged from the kept sessions: no withheld model, and its numbers are their sum",
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(kept, "withheldOnly"),
+    false,
+    "the kept day is built field by field, so nothing rides along from the input row",
   );
   assert.equal(result.sessions.length, 4, "the input is not mutated");
   assert.equal(result.daily[0]?.activeTimeHours, 1.25, "the input daily row is not mutated");

@@ -3623,7 +3623,7 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
     }
   }
   if (opts.upload) {
-    const { applyUntaggedPolicy, httpUpload } = await import("./upload-BXFD2CZL.js");
+    const { applyUntaggedPolicy, httpUpload } = await import("./upload-ECFYKXQ3.js");
     const toUpload = applyUntaggedPolicy(result);
     const unassigned = result.sessions.filter((s) => !s.jiraKey).length;
     if (unassigned > 0) {

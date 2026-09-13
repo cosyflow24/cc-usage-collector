@@ -116,12 +116,18 @@ export function withoutUntagged(result: AnalysisResult): AnalysisResult {
         notionalCostUsd += s.notionalCostUsd;
         activeTimeHours += s.activeTimeHours;
       }
+      // Built EXPLICITLY, like wireSession/wireDaily above and for the same
+      // reason: with `...d`, the day an aggregate is added to DailySummary it
+      // would pass through carrying the withheld work, silently - which is the
+      // exact defect this function was fixed for once already.
       return [{
-        ...d,
+        day: d.day,
+        user: d.user,
         sessions: ses.length,
         modelUsage: rollupModels(ses),
         totals: dayTotals,
         notionalCostUsd,
+        hasUnpricedCodex: ses.some((s) => !s.costAvailable),
         activeTimeHours,
       }];
     }),

@@ -53,12 +53,22 @@ function wireDaily(d) {
 }
 function withoutUntagged(result) {
   const sessions = result.sessions.filter((s) => s.jiraKey);
-  const keptDays = new Set(sessions.map((s) => `${s.user}\0${s.day}`));
+  const keptHours = /* @__PURE__ */ new Map();
+  for (const s of sessions) {
+    const key = `${s.user}\0${s.day}`;
+    keptHours.set(key, (keptHours.get(key) ?? 0) + s.activeTimeHours);
+  }
   return {
     ...result,
     sessions,
-    daily: result.daily.filter((d) => keptDays.has(`${d.user}\0${d.day}`))
+    daily: result.daily.flatMap((d) => {
+      const hours = keptHours.get(`${d.user}\0${d.day}`);
+      return hours === void 0 ? [] : [{ ...d, activeTimeHours: hours }];
+    })
   };
+}
+function applyUntaggedPolicy(result) {
+  return process.env.CC_USAGE_UPLOAD_UNTAGGED === "0" ? withoutUntagged(result) : result;
 }
 async function httpUpload(result, opts) {
   const byUser = /* @__PURE__ */ new Map();
@@ -165,6 +175,7 @@ async function httpUpload(result, opts) {
   return { sessions, daily };
 }
 export {
+  applyUntaggedPolicy,
   httpUpload,
   withoutUntagged
 };

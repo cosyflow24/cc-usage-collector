@@ -56,8 +56,22 @@ test("writeConfig persists the opt-out and omits the default", async () => {
   await withConfig({ schemaVersion: 1 }, (m, file) => {
     m.writeConfig({ ingestUrl: "https://x/api/ingest", email: "a@b.de", uploadUntagged: false });
     assert.equal(m.readConfig().uploadUntagged, false);
-    m.writeConfig({ ingestUrl: "https://x/api/ingest", email: "a@b.de" });
-    assert.equal(m.readConfig().uploadUntagged, true);
-    assert.equal("uploadUntagged" in JSON.parse(readFileSync(file, "utf8")), false);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).uploadUntagged, false);
+  });
+  await withConfig({ schemaVersion: 1 }, (m, file) => {
+    m.writeConfig({ ingestUrl: "https://x/api/ingest", email: "a@b.de", uploadUntagged: true });
+    assert.equal("uploadUntagged" in JSON.parse(readFileSync(file, "utf8")), false,
+      "the default is not written out");
+  });
+});
+
+test("a writer that does not mention the option keeps it — login must not reset it", async () => {
+  // `login` and the legacy-env migration build their config object by hand and
+  // never mention uploadUntagged. If writeConfig persisted only what they pass,
+  // rotating a token would silently restore "upload everything".
+  await withConfig({ schemaVersion: 1, uploadUntagged: false }, (m, file) => {
+    m.writeConfig({ ingestUrl: "https://x/api/ingest", email: "a@b.de", project: "p" });
+    assert.equal(m.readConfig().uploadUntagged, false, "the opt-out survived a login-shaped write");
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).uploadUntagged, false);
   });
 });

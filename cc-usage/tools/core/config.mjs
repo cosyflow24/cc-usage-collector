@@ -77,6 +77,12 @@ export function readConfig() {
 }
 
 export function writeConfig(config) {
+  // Carry the stored opt-out forward when the caller does not mention it.
+  // `login` and the legacy-env migration build their object by hand, so
+  // persisting only what they pass silently turned `uploadUntagged: false`
+  // back into "upload everything" on the next token rotation - the one
+  // failure direction nobody would notice.
+  const uploadUntagged = config.uploadUntagged ?? readConfig().uploadUntagged;
   mkdirSync(configDir, { recursive: true, mode: 0o700 });
   if (platform() !== "win32") chmodSync(configDir, 0o700);
   const body = {
@@ -87,7 +93,7 @@ export function writeConfig(config) {
     ...(config.user ? { user: config.user } : {}),
     ...(config.workDomain ? { workDomain: config.workDomain } : {}),
     // Persist only the non-default. An absent key means "upload everything".
-    ...(config.uploadUntagged === false ? { uploadUntagged: false } : {}),
+    ...(uploadUntagged === false ? { uploadUntagged: false } : {}),
   };
   writeFileSync(jsonConfigFile, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
   if (platform() !== "win32") chmodSync(jsonConfigFile, 0o600);

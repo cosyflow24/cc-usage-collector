@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { httpUpload, withoutUntagged } from "../src/upload.ts";
+import { applyUntaggedPolicy, httpUpload, withoutUntagged } from "../src/upload.ts";
 import type { AnalysisResult, SessionSummary, TokenTotals } from "../src/types.ts";
 
 const totals: TokenTotals = {
@@ -240,7 +240,16 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
     ["2026-07-13"],
     "the day that held only untagged work goes with it; the mixed day stays",
   );
+  // The kept day must NOT carry the withheld session's minutes: the server
+  // takes active time from the daily row as sent, so `daily - sum(sessions)`
+  // would publish exactly the time this option withholds.
+  assert.equal(
+    filtered.daily[0]?.activeTimeHours,
+    tagged.activeTimeHours,
+    "the mixed day's active time is recomputed from the kept sessions only",
+  );
   assert.equal(result.sessions.length, 3, "the input is not mutated");
+  assert.equal(result.daily[0]?.activeTimeHours, 0.5, "the input daily row is not mutated");
 });
 
 test("withoutUntagged is a no-op when every session carries a key", () => {
@@ -261,4 +270,63 @@ test("withoutUntagged is a no-op when every session carries a key", () => {
   const filtered = withoutUntagged(result);
   assert.equal(filtered.sessions.length, 1);
   assert.equal(filtered.daily.length, 1);
+});
+
+test("an empty jira key counts as untagged, not as a key", () => {
+  const result = {
+    user: "dev@nnb24.de",
+    range: { since: "2026-07-13T00:00:00Z", until: "2026-07-14T00:00:00Z" },
+    sessions: [{ ...session, sessionId: "s-empty", jiraKey: "" }],
+    daily: [{
+      day: "2026-07-13",
+      user: "dev@nnb24.de",
+      sessions: 1,
+      modelUsage: [...session.modelUsage],
+      totals,
+      notionalCostUsd: 0.1,
+      activeTimeHours: 0.5,
+    }],
+  } as unknown as AnalysisResult;
+  const filtered = withoutUntagged(result);
+  assert.equal(filtered.sessions.length, 0);
+  assert.equal(filtered.daily.length, 0);
+});
+
+test("the upload policy reads the env var, and only \"0\" opts out", () => {
+  // The CLI wiring is the whole enforcement point of the setting, so the
+  // decision lives in a function and is tested rather than trusted.
+  function one(jiraKey: string | null): AnalysisResult {
+    return {
+      user: "dev@nnb24.de",
+      range: { since: "2026-07-13T00:00:00Z", until: "2026-07-14T00:00:00Z" },
+      sessions: [{ ...session, jiraKey }],
+      daily: [{
+        day: "2026-07-13",
+        user: "dev@nnb24.de",
+        sessions: 1,
+        modelUsage: [...session.modelUsage],
+        totals,
+        notionalCostUsd: 0.1,
+        activeTimeHours: 0.5,
+      }],
+    } as unknown as AnalysisResult;
+  }
+  const prev = process.env.CC_USAGE_UPLOAD_UNTAGGED;
+  try {
+    const cases: [string | undefined, number][] = [["0", 0], ["1", 1], [undefined, 1], ["false", 1]];
+    for (const [value, expected] of cases) {
+      if (value === undefined) delete process.env.CC_USAGE_UPLOAD_UNTAGGED;
+      else process.env.CC_USAGE_UPLOAD_UNTAGGED = value;
+      assert.equal(
+        applyUntaggedPolicy(one(null)).sessions.length,
+        expected,
+        `CC_USAGE_UPLOAD_UNTAGGED=${String(value)}`,
+      );
+    }
+    process.env.CC_USAGE_UPLOAD_UNTAGGED = "0";
+    assert.equal(applyUntaggedPolicy(one("BI-1")).sessions.length, 1, "a tagged session always uploads");
+  } finally {
+    if (prev === undefined) delete process.env.CC_USAGE_UPLOAD_UNTAGGED;
+    else process.env.CC_USAGE_UPLOAD_UNTAGGED = prev;
+  }
 });

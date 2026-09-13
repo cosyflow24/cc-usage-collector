@@ -109,19 +109,15 @@ program
       // CC_USAGE_UPLOAD_UNTAGGED=0 (config.json `uploadUntagged: false`) opts
       // OUT: those sessions stay on this machine. withoutUntagged() drops the
       // orphaned daily rows with them - see its contract.
-      const uploadUntagged = process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0";
+      const { applyUntaggedPolicy, httpUpload } = await import("./upload.ts");
+      const toUpload = applyUntaggedPolicy(result);
       const unassigned = result.sessions.filter((s) => !s.jiraKey).length;
-      let toUpload = result;
       if (unassigned > 0) {
-        if (uploadUntagged) {
-          process.stderr.write(`${unassigned} session(s) uploaded as Unassigned (no jira key).\n`);
-        } else {
-          const { withoutUntagged } = await import("./upload.ts");
-          toUpload = withoutUntagged(result);
-          process.stderr.write(
-            `${unassigned} session(s) without a Jira key kept local (uploadUntagged: false).\n`,
-          );
-        }
+        process.stderr.write(
+          toUpload === result
+            ? `${unassigned} session(s) uploaded as Unassigned (no jira key).\n`
+            : `${unassigned} session(s) without a Jira key kept local (uploadUntagged: false).\n`,
+        );
       }
       const ingestUrl = process.env.CC_USAGE_INGEST_URL;
       const ingestToken = process.env.CC_USAGE_INGEST_TOKEN;
@@ -130,7 +126,6 @@ program
           "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API.",
         );
       }
-      const { httpUpload } = await import("./upload.ts");
       const res = await httpUpload(toUpload, {
         url: ingestUrl,
         token: ingestToken,

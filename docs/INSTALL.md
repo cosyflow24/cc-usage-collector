@@ -91,10 +91,13 @@ hooks, so both together = double uploads and a doubled `/task` prompt. To switch
 | `ingestUrl` | the shared dashboard | Where uploads go. |
 | `email` | your account | Which keyring entry holds the token. |
 | `workDomain` | `nnb24.de` | Only accounts on this domain are uploaded at all. |
-| `uploadUntagged` | `true` | Upload sessions that carry no Jira key. They show up under "Unassigned". Set to `false` to keep that work on your machine; the dashboard then shows nothing for it. |
+| `uploadUntagged` | `true` | Upload sessions that carry no Jira key. They show up under "Unassigned". Set to `false` to keep that work on your machine: neither the sessions, their tokens and cost, nor their active time are sent, and a day made up only of untagged work is left out entirely. |
+
+To opt out, add the key to the existing file (keep `ingestUrl` and `email` — the
+latter is how the token is found in the keyring):
 
 ```json
-{ "schemaVersion": 1, "uploadUntagged": false }
+"uploadUntagged": false
 ```
 
 ## Update

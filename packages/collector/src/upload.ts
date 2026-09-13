@@ -71,22 +71,48 @@ function wireDaily(d: DailySummary) {
 }
 
 /**
- * Drop every session that carries no Jira key, and with it every daily row that
- * has no session left. Used when `uploadUntagged` is false.
+ * Drop every session that carries no Jira key (an empty key counts as none),
+ * and with it every daily row that has no session left. Used when
+ * `uploadUntagged` is false.
  *
- * The daily half is not optional: the ingest route rebuilds each daily row from
- * the sessions in the SAME request and rejects the whole body with 400 when a
- * daily row has no matching session, so filtering sessions alone would fail the
- * upload on any day that consisted only of untagged work.
+ * Two halves, both required:
+ *
+ * 1. Orphaned daily rows go too. The ingest route rebuilds each daily row from
+ *    the sessions in the SAME request and rejects the whole body with 400 when
+ *    a daily row has no matching session, so filtering sessions alone would
+ *    fail the upload on any day that consisted only of untagged work.
+ * 2. A KEPT day's `activeTimeHours` is recomputed from the kept sessions. The
+ *    server rebuilds a daily row's tokens and cost from the payload's sessions
+ *    but takes active time from the daily row as sent (it is daily-owned), and
+ *    analyze() sums it over EVERY session of the day. Passing it through would
+ *    publish the withheld work's minutes as `daily − Σ sessions` - exactly the
+ *    quantity this option withholds.
  */
 export function withoutUntagged(result: AnalysisResult): AnalysisResult {
   const sessions = result.sessions.filter((s) => s.jiraKey);
-  const keptDays = new Set(sessions.map((s) => `${s.user}\u0000${s.day}`));
+  const keptHours = new Map<string, number>();
+  for (const s of sessions) {
+    const key = `${s.user}\u0000${s.day}`;
+    keptHours.set(key, (keptHours.get(key) ?? 0) + s.activeTimeHours);
+  }
   return {
     ...result,
     sessions,
-    daily: result.daily.filter((d) => keptDays.has(`${d.user}\u0000${d.day}`)),
+    daily: result.daily.flatMap((d) => {
+      const hours = keptHours.get(`${d.user}\u0000${d.day}`);
+      return hours === undefined ? [] : [{ ...d, activeTimeHours: hours }];
+    }),
   };
+}
+
+/**
+ * The upload policy: honour `CC_USAGE_UPLOAD_UNTAGGED=0` (set from config.json's
+ * `uploadUntagged: false`) by withholding untagged sessions. Lives here, not
+ * inline in the CLI, so the one decision that enforces the setting is testable.
+ * Anything other than the exact string "0" uploads everything.
+ */
+export function applyUntaggedPolicy(result: AnalysisResult): AnalysisResult {
+  return process.env.CC_USAGE_UPLOAD_UNTAGGED === "0" ? withoutUntagged(result) : result;
 }
 
 export async function httpUpload(

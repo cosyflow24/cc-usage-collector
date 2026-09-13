@@ -111,9 +111,10 @@ cd cc-usage-collector && git pull && bash install.sh   # idempotent — safe to 
 
 `install.sh` reuses your saved token, so no re-enroll is needed.
 
-### `git pull` fails? (history was rewritten in July 2026)
+### `git pull` fails? (the history was rewritten)
 
-If you installed **before 2026-07-14**, the repo history was rewritten and a
+The history has been rewritten twice (2026-07-14 and 2026-09-13). If your
+clone predates the most recent one, a
 plain `git pull` errors with *"fatal: refusing to merge unrelated histories"*
 or *"Your branch and 'origin/main' have diverged"*. Reset onto the new history
 — your token and config live in `~/.claude/cc-usage/`, **not** in this folder,

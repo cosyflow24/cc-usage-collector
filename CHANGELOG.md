@@ -11,7 +11,9 @@
   row is recomputed from the tagged sessions alone, so nothing in the request
   body encodes the withheld work. Only a real `false` opts out, and the setting
   applies going forward — sessions already uploaded stay on the server.
-- Test fixtures use `example.com` addresses instead of a real private one.
+- Test fixtures use `example.com` addresses instead of a real private one, and
+  that address was removed from the repository history as well - so `git pull`
+  fails on a clone made before 2026-09-13. Re-clone; see INSTALL.md.
 
 ## 0.9.1
 

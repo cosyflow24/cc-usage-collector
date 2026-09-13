@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.2
+
+- **New setting `uploadUntagged`.** Sessions that carry no Jira key are uploaded
+  as before by default (they appear under "Unassigned"). Set
+  `"uploadUntagged": false` in `~/.config/cc-usage/config.json` and they stay on
+  your machine instead — the dashboard then shows nothing for that work, not
+  even under "Unassigned". Days that consisted only of untagged sessions are
+  left out of the upload with them, because the ingest API rebuilds each daily
+  row from the sessions in the same request.
+- Test fixtures use `example.com` addresses instead of a real private one.
+
 ## 0.9.1
 
 - **Uploads now say which collector sent them.** Every upload carries an

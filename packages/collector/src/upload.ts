@@ -70,6 +70,25 @@ function wireDaily(d: DailySummary) {
   };
 }
 
+/**
+ * Drop every session that carries no Jira key, and with it every daily row that
+ * has no session left. Used when `uploadUntagged` is false.
+ *
+ * The daily half is not optional: the ingest route rebuilds each daily row from
+ * the sessions in the SAME request and rejects the whole body with 400 when a
+ * daily row has no matching session, so filtering sessions alone would fail the
+ * upload on any day that consisted only of untagged work.
+ */
+export function withoutUntagged(result: AnalysisResult): AnalysisResult {
+  const sessions = result.sessions.filter((s) => s.jiraKey);
+  const keptDays = new Set(sessions.map((s) => `${s.user}\u0000${s.day}`));
+  return {
+    ...result,
+    sessions,
+    daily: result.daily.filter((d) => keptDays.has(`${d.user}\u0000${d.day}`)),
+  };
+}
+
 export async function httpUpload(
   result: AnalysisResult,
   // version: the plugin version, sent as `x-cc-usage-version` so the dashboard

@@ -35,10 +35,10 @@ test("shared account + a token naming a person is ok, and says who", () => {
 });
 
 test("a non-work account is a deliberate note, never a failure", () => {
-  // The user's own case: /login to a personal Gmail mid-session. Nothing is
-  // broken and nothing should be uploaded — but silence reads as breakage.
+  // /login to a personal account mid-session. Nothing is broken and nothing
+  // should be uploaded — but silence reads as breakage.
   const v = attributionVerdict({
-    me: "floraundstein.studio@gmail.com", domain: "nnb24.de", operator: null,
+    me: "private.user@example.com", domain: "nnb24.de", operator: null,
     enrolledEmails: [SHARED], sharedAccounts: [SHARED],
   });
   assert.equal(v.level, "note");

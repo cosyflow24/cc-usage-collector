@@ -101,13 +101,27 @@ program
     }
 
     if (opts.upload) {
-      // Upload ALL sessions (KI-764 three-state): untagged work lands under
-      // "Unassigned" instead of being dropped, so the dashboard shows full
-      // per-project usage. A jira key is backfilled later via /task or reclaim.
-      const toUpload = result;
+      // Default (KI-764 three-state): upload ALL sessions, so untagged work
+      // lands under "Unassigned" rather than being dropped and the dashboard
+      // shows full per-project usage. A jira key is backfilled later via /task
+      // or reclaim.
+      //
+      // CC_USAGE_UPLOAD_UNTAGGED=0 (config.json `uploadUntagged: false`) opts
+      // OUT: those sessions stay on this machine. withoutUntagged() drops the
+      // orphaned daily rows with them - see its contract.
+      const uploadUntagged = process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0";
       const unassigned = result.sessions.filter((s) => !s.jiraKey).length;
+      let toUpload = result;
       if (unassigned > 0) {
-        process.stderr.write(`${unassigned} session(s) uploaded as Unassigned (no jira key).\n`);
+        if (uploadUntagged) {
+          process.stderr.write(`${unassigned} session(s) uploaded as Unassigned (no jira key).\n`);
+        } else {
+          const { withoutUntagged } = await import("./upload.ts");
+          toUpload = withoutUntagged(result);
+          process.stderr.write(
+            `${unassigned} session(s) without a Jira key kept local (uploadUntagged: false).\n`,
+          );
+        }
       }
       const ingestUrl = process.env.CC_USAGE_INGEST_URL;
       const ingestToken = process.env.CC_USAGE_INGEST_TOKEN;

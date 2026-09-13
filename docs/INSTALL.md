@@ -82,6 +82,21 @@ hooks, so both together = double uploads and a doubled `/task` prompt. To switch
 2. `/plugin marketplace add cosyflow24/cc-usage-collector` → `/plugin install cc-usage`.
    Your saved token is reused — no `/cc-usage-login` needed.
 
+## Settings
+
+`~/.config/cc-usage/config.json` (created by `cc-usage login`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ingestUrl` | the shared dashboard | Where uploads go. |
+| `email` | your account | Which keyring entry holds the token. |
+| `workDomain` | `nnb24.de` | Only accounts on this domain are uploaded at all. |
+| `uploadUntagged` | `true` | Upload sessions that carry no Jira key. They show up under "Unassigned". Set to `false` to keep that work on your machine; the dashboard then shows nothing for it. |
+
+```json
+{ "schemaVersion": 1, "uploadUntagged": false }
+```
+
 ## Update
 
 **Plugin:** `/plugin update`. **Script:**

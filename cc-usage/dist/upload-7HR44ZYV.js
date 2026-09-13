@@ -51,6 +51,15 @@ function wireDaily(d) {
     activeTimeHours: d.activeTimeHours
   };
 }
+function withoutUntagged(result) {
+  const sessions = result.sessions.filter((s) => s.jiraKey);
+  const keptDays = new Set(sessions.map((s) => `${s.user}\0${s.day}`));
+  return {
+    ...result,
+    sessions,
+    daily: result.daily.filter((d) => keptDays.has(`${d.user}\0${d.day}`))
+  };
+}
 async function httpUpload(result, opts) {
   const byUser = /* @__PURE__ */ new Map();
   const bucket = (u) => {
@@ -156,5 +165,6 @@ async function httpUpload(result, opts) {
   return { sessions, daily };
 }
 export {
-  httpUpload
+  httpUpload,
+  withoutUntagged
 };

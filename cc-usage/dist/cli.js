@@ -4161,11 +4161,21 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
     }
   }
   if (opts.upload) {
-    const toUpload = result;
+    const uploadUntagged = process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0";
     const unassigned = result.sessions.filter((s) => !s.jiraKey).length;
+    let toUpload = result;
     if (unassigned > 0) {
-      process.stderr.write(`${unassigned} session(s) uploaded as Unassigned (no jira key).
+      if (uploadUntagged) {
+        process.stderr.write(`${unassigned} session(s) uploaded as Unassigned (no jira key).
 `);
+      } else {
+        const { withoutUntagged } = await import("./upload-7HR44ZYV.js");
+        toUpload = withoutUntagged(result);
+        process.stderr.write(
+          `${unassigned} session(s) without a Jira key kept local (uploadUntagged: false).
+`
+        );
+      }
     }
     const ingestUrl = process.env.CC_USAGE_INGEST_URL;
     const ingestToken = process.env.CC_USAGE_INGEST_TOKEN;
@@ -4174,11 +4184,11 @@ program2.name("cc-usage").description("Analyze Claude Code + Codex session logs;
         "Upload is not configured. Run /cc-usage-login <token> to configure the ingest API."
       );
     }
-    const { httpUpload } = await import("./upload-LHKPSK4E.js");
+    const { httpUpload } = await import("./upload-7HR44ZYV.js");
     const res = await httpUpload(toUpload, {
       url: ingestUrl,
       token: ingestToken,
-      version: true ? "0.9.1" : void 0
+      version: true ? "0.9.2" : void 0
     });
     process.stderr.write(`Uploaded ${res.sessions} sessions, ${res.daily} daily rows.
 `);

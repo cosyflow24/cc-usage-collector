@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { httpUpload } from "../src/upload.ts";
+import { httpUpload, withoutUntagged } from "../src/upload.ts";
 import type { AnalysisResult, SessionSummary, TokenTotals } from "../src/types.ts";
 
 const totals: TokenTotals = {
@@ -211,4 +211,54 @@ test("httpUpload sends the collector version header only when it has one", async
     (globalThis as { fetch: unknown }).fetch = prev;
   }
   assert.deepEqual(seen, ["0.9.1", null]);
+});
+
+test("withoutUntagged drops untagged sessions and the days left with none", () => {
+  const tagged = { ...session, sessionId: "s-tagged", jiraKey: "BI-1", day: "2026-07-13" };
+  const untaggedSameDay = { ...session, sessionId: "s-mixed", jiraKey: null, day: "2026-07-13" };
+  const untaggedOwnDay = { ...session, sessionId: "s-alone", jiraKey: null, day: "2026-07-14" };
+  const daily = (day: string) => ({
+    day,
+    user: "dev@nnb24.de",
+    sessions: 1,
+    modelUsage: [...session.modelUsage],
+    totals,
+    notionalCostUsd: 0.1,
+    activeTimeHours: 0.5,
+  });
+  const result = {
+    user: "dev@nnb24.de",
+    range: { since: "2026-07-13T00:00:00Z", until: "2026-07-15T00:00:00Z" },
+    sessions: [tagged, untaggedSameDay, untaggedOwnDay],
+    daily: [daily("2026-07-13"), daily("2026-07-14")],
+  } as unknown as AnalysisResult;
+
+  const filtered = withoutUntagged(result);
+  assert.deepEqual(filtered.sessions.map((s) => s.sessionId), ["s-tagged"]);
+  assert.deepEqual(
+    filtered.daily.map((d) => d.day),
+    ["2026-07-13"],
+    "the day that held only untagged work goes with it; the mixed day stays",
+  );
+  assert.equal(result.sessions.length, 3, "the input is not mutated");
+});
+
+test("withoutUntagged is a no-op when every session carries a key", () => {
+  const result = {
+    user: "dev@nnb24.de",
+    range: { since: "2026-07-13T00:00:00Z", until: "2026-07-14T00:00:00Z" },
+    sessions: [{ ...session, jiraKey: "BI-1" }],
+    daily: [{
+      day: "2026-07-13",
+      user: "dev@nnb24.de",
+      sessions: 1,
+      modelUsage: [...session.modelUsage],
+      totals,
+      notionalCostUsd: 0.1,
+      activeTimeHours: 0.5,
+    }],
+  } as unknown as AnalysisResult;
+  const filtered = withoutUntagged(result);
+  assert.equal(filtered.sessions.length, 1);
+  assert.equal(filtered.daily.length, 1);
 });

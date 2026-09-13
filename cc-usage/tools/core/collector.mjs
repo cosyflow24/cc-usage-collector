@@ -68,6 +68,7 @@ export function runCollector(args, { quiet = false } = {}) {
     env.CC_USAGE_INGEST_TOKEN = token;
     if (cfg.user || cfg.email) env.CC_USAGE_USER = cfg.user || cfg.email;
     if (cfg.workDomain) env.CC_USAGE_WORK_DOMAIN = cfg.workDomain;
+    if (cfg.uploadUntagged === false) env.CC_USAGE_UPLOAD_UNTAGGED = "0";
   }
   const result = spawnSync(process.execPath, [bundle, ...args], {
     stdio: quiet ? ["ignore", "ignore", "pipe"] : "inherit",
@@ -115,6 +116,7 @@ export function runCollectorDetached(args) {
     CC_USAGE_INGEST_TOKEN: token,
     ...(cfg.user || cfg.email ? { CC_USAGE_USER: cfg.user || cfg.email } : {}),
     ...(cfg.workDomain ? { CC_USAGE_WORK_DOMAIN: cfg.workDomain } : {}),
+    ...(cfg.uploadUntagged === false ? { CC_USAGE_UPLOAD_UNTAGGED: "0" } : {}),
   };
   return spawnDetachedProcess(
     process.execPath,

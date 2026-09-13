@@ -67,6 +67,12 @@ export function readConfig() {
     project: stored.project || process.env.CC_USAGE_PROJECT || "",
     user: stored.user || process.env.CC_USAGE_USER || "",
     workDomain: stored.workDomain || process.env.CC_USAGE_WORK_DOMAIN || "",
+    // Upload sessions that carry no Jira key (default: yes, see KI-764). Set
+    // `"uploadUntagged": false` in config.json to keep untagged work local;
+    // the dashboard then shows nothing for it, not even under "Unassigned".
+    uploadUntagged: stored.uploadUntagged === false
+      ? false
+      : process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0",
   };
 }
 
@@ -80,6 +86,8 @@ export function writeConfig(config) {
     project: config.project || "",
     ...(config.user ? { user: config.user } : {}),
     ...(config.workDomain ? { workDomain: config.workDomain } : {}),
+    // Persist only the non-default. An absent key means "upload everything".
+    ...(config.uploadUntagged === false ? { uploadUntagged: false } : {}),
   };
   writeFileSync(jsonConfigFile, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
   if (platform() !== "win32") chmodSync(jsonConfigFile, 0o600);

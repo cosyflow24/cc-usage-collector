@@ -1,3 +1,4 @@
+import { emptyTotals, mergeTotals, rollupModels } from "./analyze.ts";
 import { isWorkAccount } from "./config.ts";
 import type {
   AnalysisResult,
@@ -68,6 +69,79 @@ function wireDaily(d: DailySummary) {
     notionalCostUsd: d.notionalCostUsd,
     activeTimeHours: d.activeTimeHours,
   };
+}
+
+/**
+ * Drop every session that carries no Jira key (an empty key counts as none),
+ * and with it every daily row that has no session left. Used when
+ * `uploadUntagged` is false.
+ *
+ * Two halves, both required:
+ *
+ * 1. Orphaned daily rows go too. The ingest route rebuilds each daily row from
+ *    the sessions in the SAME request and rejects the whole body with 400 when
+ *    a daily row has no matching session, so filtering sessions alone would
+ *    fail the upload on any day that consisted only of untagged work.
+ * 2. A KEPT day is recomputed from the kept sessions - EVERY aggregate it
+ *    carries: session count, totals, cost, model list and active time.
+ *    analyze() sums each of them over every session of the day, so passing any
+ *    one through would publish the withheld work as `daily - sum(sessions)`.
+ *    The server does recompute all of them except active time, so most of this
+ *    is invisible in the table either way - but the withheld numbers would
+ *    still have travelled in the request body, and a request body is not a
+ *    place to put something you were asked not to send.
+ *
+ * The top-level `result.totals` / `notionalCostUsd` / `modelUsage` are left
+ * alone: they describe the local analysis, `httpUpload` never reads them, and
+ * the CLI prints the unfiltered run on purpose.
+ */
+export function withoutUntagged(result: AnalysisResult): AnalysisResult {
+  const sessions = result.sessions.filter((s) => s.jiraKey);
+  const kept = new Map<string, SessionSummary[]>();
+  for (const s of sessions) {
+    const key = `${s.user}\u0000${s.day}`;
+    (kept.get(key) ?? kept.set(key, []).get(key)!).push(s);
+  }
+  return {
+    ...result,
+    sessions,
+    daily: result.daily.flatMap((d) => {
+      const ses = kept.get(`${d.user}\u0000${d.day}`);
+      if (!ses) return [];
+      const dayTotals = emptyTotals();
+      let notionalCostUsd = 0;
+      let activeTimeHours = 0;
+      for (const s of ses) {
+        mergeTotals(dayTotals, s.totals);
+        notionalCostUsd += s.notionalCostUsd;
+        activeTimeHours += s.activeTimeHours;
+      }
+      // Built EXPLICITLY, like wireSession/wireDaily above and for the same
+      // reason: with `...d`, the day an aggregate is added to DailySummary it
+      // would pass through carrying the withheld work, silently - which is the
+      // exact defect this function was fixed for once already.
+      return [{
+        day: d.day,
+        user: d.user,
+        sessions: ses.length,
+        modelUsage: rollupModels(ses),
+        totals: dayTotals,
+        notionalCostUsd,
+        hasUnpricedCodex: ses.some((s) => !s.costAvailable),
+        activeTimeHours,
+      }];
+    }),
+  };
+}
+
+/**
+ * The upload policy: honour `CC_USAGE_UPLOAD_UNTAGGED=0` (set from config.json's
+ * `uploadUntagged: false`) by withholding untagged sessions. Lives here, not
+ * inline in the CLI, so the one decision that enforces the setting is testable.
+ * Anything other than the exact string "0" uploads everything.
+ */
+export function applyUntaggedPolicy(result: AnalysisResult): AnalysisResult {
+  return process.env.CC_USAGE_UPLOAD_UNTAGGED === "0" ? withoutUntagged(result) : result;
 }
 
 export async function httpUpload(

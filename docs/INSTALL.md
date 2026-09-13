@@ -82,6 +82,25 @@ hooks, so both together = double uploads and a doubled `/task` prompt. To switch
 2. `/plugin marketplace add cosyflow24/cc-usage-collector` → `/plugin install cc-usage`.
    Your saved token is reused — no `/cc-usage-login` needed.
 
+## Settings
+
+`~/.config/cc-usage/config.json` (created by `cc-usage login`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ingestUrl` | the shared dashboard | Where uploads go. |
+| `email` | your account | Which keyring entry holds the token. |
+| `workDomain` | `nnb24.de` | Only accounts on this domain are uploaded at all. |
+| `uploadUntagged` | `true` | Upload sessions that carry no Jira key. They show up under "Unassigned". Set to `false` to keep that work on your machine: neither the sessions, their tokens and cost, nor their active time are sent, and a day made up only of untagged work is left out entirely. |
+
+It applies to what is uploaded from now on; sessions already on the server stay
+there. To opt out, add the key to the existing file (keep `ingestUrl` and
+`email` — the latter is how the token is found in the keyring):
+
+```json
+"uploadUntagged": false
+```
+
 ## Update
 
 **Plugin:** `/plugin update`. **Script:**
@@ -92,9 +111,10 @@ cd cc-usage-collector && git pull && bash install.sh   # idempotent — safe to 
 
 `install.sh` reuses your saved token, so no re-enroll is needed.
 
-### `git pull` fails? (history was rewritten in July 2026)
+### `git pull` fails? (the history was rewritten)
 
-If you installed **before 2026-07-14**, the repo history was rewritten and a
+The history has been rewritten twice (2026-07-14 and 2026-09-13). If your
+clone predates the most recent one, a
 plain `git pull` errors with *"fatal: refusing to merge unrelated histories"*
 or *"Your branch and 'origin/main' have diverged"*. Reset onto the new history
 — your token and config live in `~/.claude/cc-usage/`, **not** in this folder,

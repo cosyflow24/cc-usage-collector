@@ -55,6 +55,16 @@ export const CODEX_AUTH_JSON = join(
   "auth.json",
 );
 
+let warnedUploadUntagged = false;
+function warnIfNotBoolean(value) {
+  if (value === undefined || typeof value === "boolean" || warnedUploadUntagged) return;
+  warnedUploadUntagged = true;
+  process.stderr.write(
+    `cc-usage: config.json has uploadUntagged: ${JSON.stringify(value)} - only the boolean false opts out, `
+    + "so untagged sessions ARE being uploaded.\n",
+  );
+}
+
 export function readConfig() {
   let stored = {};
   if (existsSync(jsonConfigFile)) {
@@ -67,10 +77,25 @@ export function readConfig() {
     project: stored.project || process.env.CC_USAGE_PROJECT || "",
     user: stored.user || process.env.CC_USAGE_USER || "",
     workDomain: stored.workDomain || process.env.CC_USAGE_WORK_DOMAIN || "",
+    // Upload sessions that carry no Jira key (default: yes, see KI-764). Set
+    // `"uploadUntagged": false` in config.json to keep untagged work local;
+    // the dashboard then shows nothing for it, not even under "Unassigned".
+    // Strict: only a real `false` opts out. A typo like "false" (a string)
+    // would otherwise fail OPEN and upload everything with no signal at all,
+    // and on the hook path even stderr is discarded - so say something.
+    uploadUntagged: stored.uploadUntagged === false
+      ? false
+      : (warnIfNotBoolean(stored.uploadUntagged), process.env.CC_USAGE_UPLOAD_UNTAGGED !== "0"),
   };
 }
 
 export function writeConfig(config) {
+  // Carry the stored opt-out forward when the caller does not mention it.
+  // `login` and the legacy-env migration build their object by hand, so
+  // persisting only what they pass silently turned `uploadUntagged: false`
+  // back into "upload everything" on the next token rotation - the one
+  // failure direction nobody would notice.
+  const uploadUntagged = config.uploadUntagged ?? readConfig().uploadUntagged;
   mkdirSync(configDir, { recursive: true, mode: 0o700 });
   if (platform() !== "win32") chmodSync(configDir, 0o700);
   const body = {
@@ -80,6 +105,8 @@ export function writeConfig(config) {
     project: config.project || "",
     ...(config.user ? { user: config.user } : {}),
     ...(config.workDomain ? { workDomain: config.workDomain } : {}),
+    // Persist only the non-default. An absent key means "upload everything".
+    ...(uploadUntagged === false ? { uploadUntagged: false } : {}),
   };
   writeFileSync(jsonConfigFile, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
   if (platform() !== "win32") chmodSync(jsonConfigFile, 0o600);

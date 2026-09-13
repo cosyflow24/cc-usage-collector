@@ -2,8 +2,11 @@
 import { createRequire as __ccuCreateRequire } from 'module';
 const require = __ccuCreateRequire(import.meta.url);
 import {
-  isWorkAccount
-} from "./chunk-NEB74BZI.js";
+  emptyTotals,
+  isWorkAccount,
+  mergeTotals,
+  rollupModels
+} from "./chunk-FS4HAWX2.js";
 
 // src/upload.ts
 function wireTotals(t) {
@@ -50,6 +53,43 @@ function wireDaily(d) {
     notionalCostUsd: d.notionalCostUsd,
     activeTimeHours: d.activeTimeHours
   };
+}
+function withoutUntagged(result) {
+  const sessions = result.sessions.filter((s) => s.jiraKey);
+  const kept = /* @__PURE__ */ new Map();
+  for (const s of sessions) {
+    const key = `${s.user}\0${s.day}`;
+    (kept.get(key) ?? kept.set(key, []).get(key)).push(s);
+  }
+  return {
+    ...result,
+    sessions,
+    daily: result.daily.flatMap((d) => {
+      const ses = kept.get(`${d.user}\0${d.day}`);
+      if (!ses) return [];
+      const dayTotals = emptyTotals();
+      let notionalCostUsd = 0;
+      let activeTimeHours = 0;
+      for (const s of ses) {
+        mergeTotals(dayTotals, s.totals);
+        notionalCostUsd += s.notionalCostUsd;
+        activeTimeHours += s.activeTimeHours;
+      }
+      return [{
+        day: d.day,
+        user: d.user,
+        sessions: ses.length,
+        modelUsage: rollupModels(ses),
+        totals: dayTotals,
+        notionalCostUsd,
+        hasUnpricedCodex: ses.some((s) => !s.costAvailable),
+        activeTimeHours
+      }];
+    })
+  };
+}
+function applyUntaggedPolicy(result) {
+  return process.env.CC_USAGE_UPLOAD_UNTAGGED === "0" ? withoutUntagged(result) : result;
 }
 async function httpUpload(result, opts) {
   const byUser = /* @__PURE__ */ new Map();
@@ -156,5 +196,7 @@ async function httpUpload(result, opts) {
   return { sessions, daily };
 }
 export {
-  httpUpload
+  applyUntaggedPolicy,
+  httpUpload,
+  withoutUntagged
 };

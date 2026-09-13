@@ -214,23 +214,28 @@ test("httpUpload sends the collector version header only when it has one", async
 });
 
 test("withoutUntagged drops untagged sessions and the days left with none", () => {
-  const tagged = { ...session, sessionId: "s-tagged", jiraKey: "BI-1", day: "2026-07-13" };
-  const untaggedSameDay = { ...session, sessionId: "s-mixed", jiraKey: null, day: "2026-07-13" };
-  const untaggedOwnDay = { ...session, sessionId: "s-alone", jiraKey: null, day: "2026-07-14" };
-  const daily = (day: string) => ({
+  // Distinct active times on purpose: analyze() sums a day's sessions into the
+  // daily row, so the mixed day's 1.25h is 0.5h tagged + 0.75h untagged. If the
+  // kept row were passed through unchanged, the withheld 0.75h would still be
+  // derivable as daily - sum(sessions) - and an assertion against a daily row
+  // that happened to equal the session would not notice.
+  const tagged = { ...session, sessionId: "s-tagged", jiraKey: "BI-1", day: "2026-07-13", activeTimeHours: 0.5 };
+  const untaggedSameDay = { ...session, sessionId: "s-mixed", jiraKey: null, day: "2026-07-13", activeTimeHours: 0.75 };
+  const untaggedOwnDay = { ...session, sessionId: "s-alone", jiraKey: null, day: "2026-07-14", activeTimeHours: 2 };
+  const daily = (day: string, activeTimeHours: number) => ({
     day,
     user: "dev@nnb24.de",
     sessions: 1,
     modelUsage: [...session.modelUsage],
     totals,
     notionalCostUsd: 0.1,
-    activeTimeHours: 0.5,
+    activeTimeHours,
   });
   const result = {
     user: "dev@nnb24.de",
     range: { since: "2026-07-13T00:00:00Z", until: "2026-07-15T00:00:00Z" },
     sessions: [tagged, untaggedSameDay, untaggedOwnDay],
-    daily: [daily("2026-07-13"), daily("2026-07-14")],
+    daily: [daily("2026-07-13", 1.25), daily("2026-07-14", 2)],
   } as unknown as AnalysisResult;
 
   const filtered = withoutUntagged(result);
@@ -249,7 +254,7 @@ test("withoutUntagged drops untagged sessions and the days left with none", () =
     "the mixed day's active time is recomputed from the kept sessions only",
   );
   assert.equal(result.sessions.length, 3, "the input is not mutated");
-  assert.equal(result.daily[0]?.activeTimeHours, 0.5, "the input daily row is not mutated");
+  assert.equal(result.daily[0]?.activeTimeHours, 1.25, "the input daily row is not mutated");
 });
 
 test("withoutUntagged is a no-op when every session carries a key", () => {
